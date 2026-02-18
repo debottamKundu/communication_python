@@ -1,8 +1,11 @@
 from scipy.io import loadmat
 from matplotlib import pyplot as plt
 import numpy as np
-from communication_subspace.faCrossVal import cross_val_fa, factor_analysis_model_select
-from communication_subspace.reducedRankcrossval import cross_validate_rrr, select_optimal_dimension
+from communication_subspace.core.faCrossVal import cross_val_fa, factor_analysis_model_select
+from communication_subspace.core.reducedRankcrossval import (
+    cross_validate_rrr,
+    select_optimal_dimension,
+)
 
 
 if __name__ == "__main__":
@@ -13,7 +16,7 @@ if __name__ == "__main__":
     Y_V1 = data["Y_V1"]
     Y_V2 = data["Y_V2"]
 
-    # dims_to_test = np.arange(1, 11)
+    dims_to_test = np.arange(1, 11)
     cv_folds = 10
 
     # print("Running Cross Validation...")
@@ -43,5 +46,3 @@ if __name__ == "__main__":
     # plt.tight_layout()
 
     # plt.show()
-
-

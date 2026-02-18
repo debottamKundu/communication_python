@@ -1,7 +1,7 @@
 import numpy as np
 from scipy import linalg
 from sklearn.linear_model import RidgeCV, Ridge
-from communication_subspace.ridgelambda import get_ridge_lambda
+from communication_subspace.core.ridgelambda import get_ridge_lambda
 
 
 def reduced_rank_regression(X, Y, dims, ridge_init=True):

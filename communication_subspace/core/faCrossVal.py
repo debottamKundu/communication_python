@@ -3,8 +3,8 @@ from sklearn.model_selection import KFold
 from scipy import linalg
 from tqdm import tqdm
 
-from communication_subspace.factorAnalysis import factor_analysis
-from communication_subspace.faTestLoglike import factor_analysis_test_log_like
+from communication_subspace.core.factorAnalysis import factor_analysis
+from communication_subspace.core.faTestLoglike import factor_analysis_test_log_like
 
 
 def cross_val_fa(X, q_list, cv_num_folds=10):
@@ -42,7 +42,9 @@ def cross_val_fa(X, q_list, cv_num_folds=10):
 
     cv_log_like = np.zeros((cv_num_folds, len(q_list)))
 
-    for i, (train_idx, test_idx) in tqdm(enumerate(kf.split(X)), total=cv_num_folds, desc='Cross-Validation'):
+    for i, (train_idx, test_idx) in tqdm(
+        enumerate(kf.split(X)), total=cv_num_folds, desc="Cross-Validation"
+    ):
         X_train, X_test = X[train_idx], X[test_idx]
 
         fold_ll = factor_analysis_test_log_like(X_train, X_test, q_list)

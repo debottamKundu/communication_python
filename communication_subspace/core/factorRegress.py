@@ -1,8 +1,8 @@
 import numpy as np
 from scipy import linalg
 
-from communication_subspace.faCrossVal import cross_val_fa
-from communication_subspace.factorAnalysis import factor_analysis
+from communication_subspace.core.faCrossVal import cross_val_fa
+from communication_subspace.core.factorAnalysis import factor_analysis
 
 
 def factor_regress(Y, X, q_dims, q_opt=None, var_threshold=0.95):

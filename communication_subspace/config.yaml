@@ -1,0 +1,37 @@
+'widefield_regions': [
+    [ "ACAd" ],
+    [ "AUDd" ],
+    [ "AUDp" ],
+    [ "AUDpo" ],
+    [ "AUDv" ],
+    [ "FRP" ],
+    [ "MOB" ],  
+    [ "MOp" ],
+    [ "MOs" ],
+    [ "PL" ],
+    [ "RSPagl" ],
+    [ "RSPd" ],
+    [ "RSPv" ],
+    [ "SSp-bfd" ],
+    [ "SSp-ll" ],
+    [ "SSp-m" ],
+    [ "SSp-n" ],
+    [ "SSp-tr" ],
+    [ "SSp-ul" ],
+    [ "SSp-un" ],
+    [ "SSs" ],
+    [ "TEa" ],
+    [ "VISa" ],
+    [ "VISal" ],
+    [ "VISam" ],
+    [ "VISl" ],
+    [ "VISli" ],
+    [ "VISp" ],
+    [ "VISpl" ],
+    [ "VISpm" ],
+    [ "VISpor" ],
+    [ "VISrl" ],]
+wifi_subset: 10
+choice_frames: (-2,0)
+stimulus_frames: (-1,1)
+cv_folds: 5

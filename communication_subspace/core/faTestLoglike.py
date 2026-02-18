@@ -2,7 +2,7 @@ import numpy as np
 from scipy import linalg
 from tqdm import tqdm
 
-from communication_subspace.factorAnalysis import factor_analysis
+from communication_subspace.core.factorAnalysis import factor_analysis
 
 
 def mvn_log_like(X, m, S):
@@ -51,7 +51,7 @@ def factor_analysis_test_log_like(X_train, X_test, q_list, method="FA"):
 
     log_likes = np.zeros(len(q_list))
 
-    for i, q in tqdm(enumerate(q_list), desc='Testing Latent Dimensions'):
+    for i, q in tqdm(enumerate(q_list), desc="Testing Latent Dimensions"):
 
         if q == 0:
             Psi = np.diag(np.diag(S))

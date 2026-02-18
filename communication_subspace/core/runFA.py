@@ -1,12 +1,10 @@
 import numpy as np
 from scipy import linalg
 
-from communication_subspace.faCrossVal import cross_val_fa
-from communication_subspace.factorAnalysis import factor_analysis
+from communication_subspace.core.faCrossVal import cross_val_fa
+from communication_subspace.core.factorAnalysis import factor_analysis
 
-# Ensure you have imported the functions from previous steps:
-# from factor_analysis_module import factor_analysis
-# from cross_val_fa_module import cross_val_fa
+
 
 
 def extract_fa_latents(X, q=None, var_threshold=0.95):

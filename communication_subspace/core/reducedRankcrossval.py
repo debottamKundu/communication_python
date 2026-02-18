@@ -2,7 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import KFold
 from sklearn.metrics import r2_score
-from communication_subspace.reducedRank import reduced_rank_regression
+from communication_subspace.core.reducedRank import reduced_rank_regression
+
 
 def cross_validate_rrr(X, Y, dims, k_folds=10, ridge_init=False, scale=False):
     """
@@ -59,5 +60,3 @@ def select_optimal_dimension(cv_results):
     opt_idx = candidates[0]
 
     return dims[opt_idx], opt_idx, threshold
-
-
