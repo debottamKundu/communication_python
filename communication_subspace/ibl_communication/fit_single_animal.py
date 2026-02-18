@@ -12,7 +12,7 @@ from ibl_info.decoder_pid import compute_decoder_pid
 from ibl_info.decoder_utils import load_specific_regions
 from ibl_info.dual_decoders import complete_decoder_pid_with_null, compute_null_distribution
 from ibl_info.prepare_data_pid import get_new_cinc_intervals, get_new_cinc_intervals_choice
-from ibl_info.utils import check_config, epoch_events
+from ibl_info.utils import epoch_events
 from one.api import ONE
 from prior_localization.prepare_data import prepare_widefield
 from brainbox.io.one import SessionLoader
@@ -27,6 +27,7 @@ from communication_subspace.core.reducedRankcrossval import (
 )
 from communication_subspace.core.runFA import extract_fa_latents
 from ibl_info.decoder_pid_wifi import region_combinations, check_minimum
+from communication_subspace.ibl_communication.utils import check_config
 
 # flow:
 # for a single animal
@@ -138,16 +139,17 @@ def process_session(session_id):
 
 if __name__ == "__main__":
 
-    one = ONE(
-        base_url="https://openalyx.internationalbrainlab.org",
-        password="international",
-        silent=True,
-        username="intbrainlab",
-    )
-    sessions = one.search(datasets="widefieldU.images.npy")
-    print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
-    n_cores = 8  # type: ignore
-    results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
+    print(config)
+    # one = ONE(
+    #     base_url="https://openalyx.internationalbrainlab.org",
+    #     password="international",
+    #     silent=True,
+    #     username="intbrainlab",
+    # )
+    # sessions = one.search(datasets="widefieldU.images.npy")
+    # print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
+    # n_cores = 8  # type: ignore
+    # results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
 
-    print(f"Successes: {results.count(1)}")  # type: ignore
-    print(f"Failures: {results.count(-1)}")  # type: ignore
+    # print(f"Successes: {results.count(1)}")  # type: ignore
+    # print(f"Failures: {results.count(-1)}")  # type: ignore

@@ -32,6 +32,7 @@
     [ "VISpor" ],
     [ "VISrl" ],]
 wifi_subset: 10
-choice_frames: (-2,0)
-stimulus_frames: (-1,1)
+hemisphere: ("left", "right")
+choice_frames: [-2,0]
+stimulus_frames: [-1,1]
 cv_folds: 5
