@@ -5,7 +5,7 @@ from sklearn.metrics import r2_score
 from communication_subspace.core.reducedRank import reduced_rank_regression
 
 
-def cross_validate_rrr(X, Y, dims, k_folds=10, ridge_init=False, scale=False):
+def cross_validate_rrr(X, Y, dims, k_folds=10, ridge_init=True, scale=False):
     """
     Performs K-Fold Cross Validation for Reduced Rank Regression.
     Evaluates the model for every dimension specified in 'dims'.

@@ -26,7 +26,7 @@ dependencies = [
     "tqdm",
     "typer",
 ]
-requires-python = "~=3.10.2"
+requires-python = "~=3.12.2"
 
 [tool.black]
 line-length = 99

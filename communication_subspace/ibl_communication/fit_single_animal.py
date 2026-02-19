@@ -81,14 +81,14 @@ def process_single_animal(eid, epoch):
 
     framewise_data = {}
     for frame_idx in range(total_frames):
-        frame_pickle_fa = {}
+        # frame_pickle_fa = {}
         frame_pickle_rrr = {}
         for region_a_idx in range(len(used_regions)):
             # run fa here, because we need to run it only once
             region_a = data_epoch[region_a_idx][frame_idx, :].T
-            Z, U, Q, q_opt = extract_fa_latents(region_a, q=None, var_threshold=0.95)
-            fa_dict = {"Z": Z, "U": U, "Q": Q, "q_opt": q_opt}
-            frame_pickle_fa[used_regions[region_a_idx]] = fa_dict
+            # Z, U, Q, q_opt = extract_fa_latents(region_a, q=None, var_threshold=0.95)
+            # fa_dict = {"Z": Z, "U": U, "Q": Q, "q_opt": q_opt}
+            # frame_pickle_fa[used_regions[region_a_idx]] = fa_dict
 
             for region_b_idx in range(len(used_regions)):
                 if region_a_idx == region_b_idx:
@@ -101,18 +101,18 @@ def process_single_animal(eid, epoch):
 
                 # run fa and rrr.
                 cv_folds = config["cv_folds"]
-                dimensions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30]
+                # dimensions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30]
                 n_source_voxels = region_a.shape[1]
                 n_target_voxels = region_b.shape[1]
                 max_possible_rank = min(n_source_voxels, n_target_voxels)
-                valid_dims = [d for d in dimensions if d <= max_possible_rank]
-
+                # valid_dims = [d for d in dimensions if d <= max_possible_rank]
+                valid_dims = np.arange(1, max_possible_rank)
                 cv_results = cross_validate_rrr(region_a, region_b, valid_dims, k_folds=cv_folds)
                 # just keep the cv_results
                 rrr_dict = {"cv_results": cv_results}
                 frame_pickle_rrr[key] = rrr_dict
 
-        framewise_data[frame_idx] = {"fa": frame_pickle_fa, "rrr": frame_pickle_rrr}
+        framewise_data[frame_idx] = {"fa": {}, "rrr": frame_pickle_rrr}
 
     return framewise_data
 
@@ -140,14 +140,20 @@ def process_session(session_id):
 if __name__ == "__main__":
 
     print(config)
-    # one = ONE(
-    #     base_url="https://openalyx.internationalbrainlab.org",
-    #     password="international",
-    #     silent=True,
-    #     username="intbrainlab",
-    # )
-    # sessions = one.search(datasets="widefieldU.images.npy")
-    # print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
+    one = ONE(
+        base_url="https://openalyx.internationalbrainlab.org",
+        password="international",
+        silent=True,
+        username="intbrainlab",
+    )
+    sessions = one.search(datasets="widefieldU.images.npy")
+    print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
+
+    session_id = sessions[0]  # type: ignore
+    process_session(session_id)
+
+    # run for a single animal:
+
     # n_cores = 8  # type: ignore
     # results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
 
