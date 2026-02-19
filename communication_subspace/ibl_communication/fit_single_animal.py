@@ -80,10 +80,10 @@ def process_single_animal(eid, epoch):
     data_epoch, used_regions = check_minimum(data_epoch, actual_regions)
 
     framewise_data = {}
-    for frame_idx in range(total_frames):
+    for frame_idx in tqdm(range(total_frames), "Processing frames"):
         # frame_pickle_fa = {}
         frame_pickle_rrr = {}
-        for region_a_idx in range(len(used_regions)):
+        for region_a_idx in tqdm(range(len(used_regions)), "Processing regions"):
             # run fa here, because we need to run it only once
             region_a = data_epoch[region_a_idx][frame_idx, :].T
             # Z, U, Q, q_opt = extract_fa_latents(region_a, q=None, var_threshold=0.95)
