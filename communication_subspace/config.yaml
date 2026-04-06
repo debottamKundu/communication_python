@@ -35,4 +35,5 @@ wifi_subset: 10
 hemisphere: ("left", "right")
 choice_frames: [-2,0]
 stimulus_frames: [-1,1]
+prior_frames: [-2,-2] 
 cv_folds: 5

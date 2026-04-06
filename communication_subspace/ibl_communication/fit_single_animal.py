@@ -101,12 +101,12 @@ def process_single_animal(eid, epoch):
 
                 # run fa and rrr.
                 cv_folds = config["cv_folds"]
-                # dimensions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30]
+                dimensions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30]
                 n_source_voxels = region_a.shape[1]
                 n_target_voxels = region_b.shape[1]
                 max_possible_rank = min(n_source_voxels, n_target_voxels)
-                # valid_dims = [d for d in dimensions if d <= max_possible_rank]
-                valid_dims = np.arange(1, max_possible_rank)
+                valid_dims = [d for d in dimensions if d <= max_possible_rank]
+                # valid_dims = np.arange(1, max_possible_rank)
                 cv_results = cross_validate_rrr(region_a, region_b, valid_dims, k_folds=cv_folds)
                 # just keep the cv_results
                 rrr_dict = {"cv_results": cv_results}
@@ -149,13 +149,13 @@ if __name__ == "__main__":
     sessions = one.search(datasets="widefieldU.images.npy")
     print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
 
-    session_id = sessions[0]  # type: ignore
-    process_session(session_id)
+    # session_id = sessions[0]  # type: ignore
+    # process_session(session_id)
 
     # run for a single animal:
 
-    # n_cores = 8  # type: ignore
-    # results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
+    n_cores = 8  # type: ignore
+    results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
 
-    # print(f"Successes: {results.count(1)}")  # type: ignore
-    # print(f"Failures: {results.count(-1)}")  # type: ignore
+    print(f"Successes: {results.count(1)}")  # type: ignore
+    print(f"Failures: {results.count(-1)}")  # type: ignore
