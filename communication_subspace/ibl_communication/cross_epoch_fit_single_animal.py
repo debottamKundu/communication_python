@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 import numpy as np
 import pickle as pkl
@@ -16,45 +17,89 @@ from communication_subspace.ibl_communication.utils import check_config
 config = check_config()
 
 
-def get_epoch_data(one, eid, align_times, epoch):
+from sklearn.linear_model import RidgeCV
+from sklearn.model_selection import KFold
+from sklearn.metrics import r2_score
+
+
+def cross_predict_regions(neuron_data_a, neuron_data_b, n_outer_splits=5, n_inner_splits=5):
     """
-    Helper function to load data for a specific epoch.
+    Performs nested cross-validation to predict Region B from Region A using Ridge Regression.
+
+    Parameters:
+    -----------
+    neuron_data_a : np.ndarray
+        Shape (trials, neurons). The predictor region.
+    neuron_data_b : np.ndarray
+        Shape (trials, neurons). The target region.
+    n_outer_splits : int
+        Number of folds for the outer CV loop (evaluating generalization).
+    n_inner_splits : int
+        Number of folds for the inner CV loop (tuning hyperparameters).
+
+    Returns:
+    --------
+    results : dict
+        Dictionary containing test indices, true/predicted values, and R2 scores.
     """
-    all_regions = config["widefield_regions"]
 
-    if epoch == "stim":
-        frames = config["stimulus_frames"]
-    elif epoch == "choice":
-        frames = config["choice_frames"]
-    elif epoch == "prior":
-        frames = config["prior_frames"]
-    else:
-        # Fallback for dynamic/prior epochs based on config format
-        frames = config.get(f"{epoch}_frames", [-1, 0])
+    X = np.asarray(neuron_data_a)
+    Y = np.asarray(neuron_data_b)
 
-    data_epoch, actual_regions = prepare_widefield(
-        one,
-        eid,
-        hemisphere=config["hemisphere"],
-        regions=all_regions,
-        align_times=align_times,
-        frame_window=frames,
-        functional_channel=470,
-        stage_only=False,
-    )
+    alphas_to_test = np.logspace(-3, 4, 20)
 
-    data_epoch, used_regions = check_minimum(data_epoch, actual_regions)
-    return data_epoch, used_regions
+    kf_outer = KFold(n_splits=n_outer_splits, shuffle=True, random_state=42)
+
+    results = {"test_indices": [], "y_true": [], "y_pred": [], "r2_scores": [], "best_alphas": []}
+
+    for train_idx, test_idx in kf_outer.split(X):
+
+        X_train, X_test = X[train_idx], X[test_idx]
+        Y_train, Y_test = Y[train_idx], Y[test_idx]
+
+        model = RidgeCV(alphas=alphas_to_test, cv=n_inner_splits)
+        model.fit(X_train, Y_train)
+
+        Y_pred = model.predict(X_test)
+        score = r2_score(Y_test, Y_pred, multioutput="uniform_average")
+
+        results["test_indices"].append(test_idx)
+        results["y_true"].append(Y_test)
+        results["y_pred"].append(Y_pred)
+        results["r2_scores"].append(score)
+        results["best_alphas"].append(model.alpha_)
+
+    # Calculate the overall mean R2 across all outer folds
+    results["overall_mean_r2"] = np.mean(results["r2_scores"])  # type: ignore
+
+    return results
 
 
-def process_cross_epoch_animal(
-    eid, epoch_1, epoch_2, prior_epoch=None, pca_components=10
+def compute_cross_temporal_matrix(
+    data_epoch_a, regions_a, data_epoch_b, regions_b, desc_label="Processing"
 ):
     """
-    Evaluates directed communication subspaces from a source region in Epoch 1
-    to target regions in Epoch 2.
-    Uses PCA to control for varying numbers of voxels across regions.
+    Computes the cross-temporal generalization matrix between two sets of regions and epochs.
     """
+    framewise_data = defaultdict(lambda: defaultdict(dict))
+    total_frames_a = data_epoch_a[0].shape[1]
+    total_frames_b = data_epoch_b[0].shape[1]
+
+    for region_a_idx, reg_a_name in enumerate(tqdm(regions_a, desc=desc_label)):
+        for region_b_idx, reg_b_name in enumerate(regions_b):
+            for f_a in range(total_frames_a):
+                region_a = data_epoch_a[region_a_idx][f_a, :].T
+                for f_b in range(total_frames_b):
+                    region_b = data_epoch_b[region_b_idx][f_b, :].T
+
+                    results = cross_predict_regions(region_a, region_b)
+                    framewise_data[reg_a_name][reg_b_name][(f_a, f_b)] = results
+
+    return framewise_data
+
+
+def cross_epoch_predict_animal(eid):
+
     one = ONE(
         base_url="https://openalyx.internationalbrainlab.org",
         password="international",
@@ -66,88 +111,130 @@ def process_cross_epoch_animal(
     trials, mask = load_trials_and_mask(
         one,
         eid,
-        sess_loader=sl,
+        sess_loader=sl,  # using session loader to load trials so that we get proper probability
         exclude_nochoice=True,
         exclude_unbiased=True,
     )
     trials = trials[mask]
+    align_event_stim = epoch_events(epoch="stim")
+    align_event_choice = epoch_events(epoch="choice")
+    align_event_prior = epoch_events(epoch="stim")  # the same align, we pick up a different frame
 
-    align_event_1 = epoch_events(epoch_1)
-    align_times_1 = trials[align_event_1].values
-    data_ep1, regions_1 = get_epoch_data(one, eid, align_times_1, epoch_1)
+    align_times_stim = trials[align_event_stim].values
+    align_times_choice = trials[align_event_choice].values
+    align_times_prior = trials[align_event_prior].values
 
-    align_event_2 = epoch_events(epoch_2)
-    align_times_2 = trials[align_event_2].values
-    data_ep2, regions_2 = get_epoch_data(one, eid, align_times_2, epoch_2)
+    all_regions = config["widefield_regions"]
+    stimulus_frames = config["stimulus_frames"]
+    choice_frames = config["choice_frames"]
+    prior_frames = config["prior_frames"]
 
-    data_prior, regions_prior = None, None
-    if prior_epoch is not None:
-        align_event_prior = epoch_events(prior_epoch)
-        align_times_prior = trials[align_event_prior].values
-        data_prior, regions_prior = get_epoch_data(
-            one, eid, align_times_prior, prior_epoch
-        )
+    data_epoch_stim, actual_regions_stim = prepare_widefield(
+        one,
+        eid,
+        hemisphere=config["hemisphere"],
+        regions=all_regions,
+        align_times=align_times_stim,
+        frame_window=stimulus_frames,
+        functional_channel=470,
+        stage_only=False,
+    )
 
-    # Find intersection of regions to ensure we iterate safely
-    used_regions = [r for r in regions_1 if r in regions_2]
+    data_epoch_choice, actual_regions_choice = prepare_widefield(
+        one,
+        eid,
+        hemisphere=config["hemisphere"],
+        regions=all_regions,
+        align_times=align_times_choice,
+        frame_window=choice_frames,
+        functional_channel=470,
+        stage_only=False,
+    )
 
-    cross_epoch_data = {}
-    pca = PCA(n_components=pca_components)
+    data_epoch_prior, actual_regions_prior = prepare_widefield(
+        one,
+        eid,
+        hemisphere=config["hemisphere"],
+        regions=all_regions,
+        align_times=align_times_prior,
+        frame_window=prior_frames,
+        functional_channel=470,
+        stage_only=False,
+    )
 
-    for region_a_name in tqdm(
-        used_regions, desc=f"Processing Source Regions ({epoch_1})"
-    ):
-        idx_1 = regions_1.index(region_a_name)
-        # Temporally average the frames window -> (voxels, trials). Transpose to -> (trials, voxels)
-        X_ep1 = np.mean(data_ep1[idx_1], axis=0).T
+    # now what
+    # stim predicts choice?
+    # prior predicts choice?
 
-        if prior_epoch is not None and region_a_name in regions_prior:
-            idx_prior = regions_prior.index(region_a_name)
-            X_prior = np.mean(data_prior[idx_prior], axis=0).T
-            X_combined = np.hstack([X_prior, X_ep1])
-        else:
-            X_combined = X_ep1
+    # prior_part
+    total_frames_choice = data_epoch_choice[0].shape[1]  # type: ignore
+    total_frames_prior = data_epoch_prior[0].shape[1]  # type: ignore
+    total_frames_stim = data_epoch_stim[0].shape[1]  # type: ignore
 
-        # Apply PCA to control for the number of voxels driving RRR results
-        X_reduced = (
-            pca.fit_transform(X_combined)
-            if X_combined.shape[1] > pca_components
-            else X_combined
-        )
+    data_epoch_stim, used_regions_stim = check_minimum(data_epoch_stim, actual_regions_stim)
+    data_epoch_choice, used_regions_choice = check_minimum(
+        data_epoch_choice, actual_regions_choice
+    )
+    data_epoch_prior, used_regions_prior = check_minimum(data_epoch_prior, actual_regions_prior)
 
-        for region_b_name in used_regions:
-            if region_a_name == region_b_name:
-                continue
+    framewise_data_stim_choice = defaultdict(lambda: defaultdict(dict))
+    framewise_data_prior_choice = defaultdict(lambda: defaultdict(dict))
 
-            idx_2 = regions_2.index(region_b_name)
-            Y_ep2 = np.mean(data_ep2[idx_2], axis=0).T
+    print("\nRunning Prior -> Choice Models...")
+    framewise_data_prior_choice = compute_cross_temporal_matrix(
+        data_epoch_a=data_epoch_prior,
+        regions_a=used_regions_prior,
+        data_epoch_b=data_epoch_choice,
+        regions_b=used_regions_choice,
+        desc_label="Prior Regions",
+    )
 
-            Y_reduced = (
-                pca.fit_transform(Y_ep2) if Y_ep2.shape[1] > pca_components else Y_ep2
-            )
+    print("\nRunning Stim -> Choice Models...")
+    framewise_data_stim_choice = compute_cross_temporal_matrix(
+        data_epoch_a=data_epoch_stim,
+        regions_a=used_regions_stim,
+        data_epoch_b=data_epoch_choice,
+        regions_b=used_regions_choice,
+        desc_label="Stim Regions",
+    )
 
-            key = f"{region_a_name}_{region_b_name}"
-
-            cv_folds = config.get("cv_folds", 5)
-            max_possible_rank = min(X_reduced.shape[1], Y_reduced.shape[1])
-            valid_dims = np.arange(1, max_possible_rank)
-
-            cv_results = cross_validate_rrr(
-                X_reduced, Y_reduced, valid_dims, k_folds=cv_folds
-            )
-
-            cross_epoch_data[key] = {"cv_results": cv_results}
-
-    return cross_epoch_data
+    return framewise_data_prior_choice, framewise_data_stim_choice
 
 
-def process_session_cross_epoch(session_id):
+def process_session(session_id):
     try:
-        cross_results = process_cross_epoch_animal(
-            session_id, epoch_1="stim", epoch_2="choice", prior_epoch=None
+        framewise_data_prior_choice, framewise_data_stim_choice = cross_epoch_predict_animal(
+            session_id
         )
-        os.makedirs("./data/generated", exist_ok=True)
-        with open(f"./data/generated/{session_id}_rrr_cross_epoch.pkl", "wb") as f:
-            pkl.dump(cross_results, f)
+        with open(f"./data/crossprediction/{session_id}_results_prior_choice.pkl", "wb") as f:
+            pkl.dump(framewise_data_prior_choice, f)
+        with open(f"./data/crossprediction/{session_id}_results_stim_choice.pkl", "wb") as f:
+            pkl.dump(framewise_data_stim_choice, f)
     except Exception as e:
-        print(f"Error processing session {session_id}: {e}")
+        print(e)
+        return -1
+    return 1
+
+
+if __name__ == "__main__":
+
+    print(config)
+    one = ONE(
+        base_url="https://openalyx.internationalbrainlab.org",
+        password="international",
+        silent=True,
+        username="intbrainlab",
+    )
+    sessions = one.search(datasets="widefieldU.images.npy")
+    print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
+
+    session_id = sessions[0]  # type: ignore
+    process_session(session_id)
+
+    # run for a single animal:
+
+    # n_cores = 8  # type: ignore
+    # results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
+
+    # print(f"Successes: {results.count(1)}")  # type: ignore
+    print(f"Failures: {results.count(-1)}")  # type: ignore
