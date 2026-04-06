@@ -52,7 +52,7 @@ def reduced_rank_regression(X, Y, dims, ridge_init=True):
 
     if ridge_init:
 
-        shrinkage_factors = np.arange(0.5, 1.01, 0.01)
+        shrinkage_factors = np.linspace(0.5, 1.0, 51)
         lambdas, dofs = get_ridge_lambda(shrinkage_factors, X, scale=True)
         clf = RidgeCV(alphas=lambdas, fit_intercept=True)
         clf.fit(X_filtered, Y)

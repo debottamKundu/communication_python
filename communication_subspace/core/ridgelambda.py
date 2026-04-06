@@ -49,6 +49,8 @@ def get_ridge_lambda(d_max_shrink, X, scale=True):
     with np.errstate(divide="ignore"):
         lambdas = d_max * (1 - d_max_shrink) / d_max_shrink
 
+    lambdas = np.clip(lambdas, a_min=1e-6, a_max=None)
+
     d_col = d[:, np.newaxis]
     lam_row = lambdas[np.newaxis, :]
     dof = np.sum(d_col / (d_col + lam_row), axis=0)
