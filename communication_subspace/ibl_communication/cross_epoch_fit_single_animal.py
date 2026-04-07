@@ -17,10 +17,10 @@ from communication_subspace.ibl_communication.utils import check_config, setup_l
 config = check_config()
 logger = setup_logger(name="IBL_Decoding", log_file="crossprediction_results.log")
 
-
 from sklearn.linear_model import RidgeCV
 from sklearn.model_selection import KFold
 from sklearn.metrics import r2_score
+from joblib import Parallel, delayed
 
 
 def cross_predict_regions(
@@ -246,13 +246,13 @@ if __name__ == "__main__":
     sessions = one.search(datasets="widefieldU.images.npy")
     print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
 
-    session_id = sessions[0]  # type: ignore
-    process_session(session_id)
+    # session_id = sessions[0]  # type: ignore
+    # process_session(session_id)
 
     # run for a single animal:
 
-    # n_cores = 8  # type: ignore
-    # results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
+    n_cores = 8  # type: ignore
+    results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
 
-    # print(f"Successes: {results.count(1)}")  # type: ignore
-    # print(f"Failures: {results.count(-1)}")  # type: ignore
+    print(f"Successes: {results.count(1)}")  # type: ignore
+    print(f"Failures: {results.count(-1)}")  # type: ignore
