@@ -12,9 +12,10 @@ from prior_localization.prepare_data import prepare_widefield
 from ibl_info.utils import epoch_events
 from ibl_info.decoder_pid_wifi import check_minimum
 from communication_subspace.core.reducedRankcrossval import cross_validate_rrr
-from communication_subspace.ibl_communication.utils import check_config
+from communication_subspace.ibl_communication.utils import check_config, setup_logger
 
 config = check_config()
+logger = setup_logger(name="IBL_Decoding", log_file="crossprediction_results.log")
 
 
 from sklearn.linear_model import RidgeCV
@@ -140,6 +141,8 @@ def cross_epoch_predict_animal(eid):
         stage_only=False,
     )
 
+    logger.info(f"Loaded stimulus data for {eid}")
+
     data_epoch_choice, actual_regions_choice = prepare_widefield(
         one,
         eid,
@@ -150,6 +153,8 @@ def cross_epoch_predict_animal(eid):
         functional_channel=470,
         stage_only=False,
     )
+
+    logger.info(f"Loaded choice data for {eid}")
 
     data_epoch_prior, actual_regions_prior = prepare_widefield(
         one,
@@ -162,14 +167,11 @@ def cross_epoch_predict_animal(eid):
         stage_only=False,
     )
 
+    logger.info(f"Loaded prior data for {eid}")
+
     # now what
     # stim predicts choice?
     # prior predicts choice?
-
-    # prior_part
-    total_frames_choice = data_epoch_choice[0].shape[1]  # type: ignore
-    total_frames_prior = data_epoch_prior[0].shape[1]  # type: ignore
-    total_frames_stim = data_epoch_stim[0].shape[1]  # type: ignore
 
     data_epoch_stim, used_regions_stim = check_minimum(data_epoch_stim, actual_regions_stim)
     data_epoch_choice, used_regions_choice = check_minimum(
@@ -180,7 +182,7 @@ def cross_epoch_predict_animal(eid):
     framewise_data_stim_choice = defaultdict(lambda: defaultdict(dict))
     framewise_data_prior_choice = defaultdict(lambda: defaultdict(dict))
 
-    print("\nRunning Prior -> Choice Models...")
+    logger.info("\nRunning Prior -> Choice Models...")
     framewise_data_prior_choice = compute_cross_temporal_matrix(
         data_epoch_a=data_epoch_prior,
         regions_a=used_regions_prior,
@@ -189,7 +191,7 @@ def cross_epoch_predict_animal(eid):
         desc_label="Prior Regions",
     )
 
-    print("\nRunning Stim -> Choice Models...")
+    logger.info("\nRunning Stim -> Choice Models...")
     framewise_data_stim_choice = compute_cross_temporal_matrix(
         data_epoch_a=data_epoch_stim,
         regions_a=used_regions_stim,
@@ -203,6 +205,7 @@ def cross_epoch_predict_animal(eid):
 
 def process_session(session_id):
     try:
+        logger.info(f"Starting processing for session: {session_id}")
         framewise_data_prior_choice, framewise_data_stim_choice = cross_epoch_predict_animal(
             session_id
         )
@@ -211,14 +214,15 @@ def process_session(session_id):
         with open(f"./data/crossprediction/{session_id}_results_stim_choice.pkl", "wb") as f:
             pkl.dump(framewise_data_stim_choice, f)
     except Exception as e:
-        print(e)
+        logger.exception(f"Error processing session: {session_id}")
         return -1
+    logger.info(f"Successfully finished session: {session_id}")
     return 1
 
 
 if __name__ == "__main__":
 
-    print(config)
+    logger.info("Initializing pipeline and ONE API...")
     one = ONE(
         base_url="https://openalyx.internationalbrainlab.org",
         password="international",
@@ -237,4 +241,4 @@ if __name__ == "__main__":
     # results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
 
     # print(f"Successes: {results.count(1)}")  # type: ignore
-    print(f"Failures: {results.count(-1)}")  # type: ignore
+    # print(f"Failures: {results.count(-1)}")  # type: ignore
