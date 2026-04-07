@@ -23,7 +23,9 @@ from sklearn.model_selection import KFold
 from sklearn.metrics import r2_score
 
 
-def cross_predict_regions(neuron_data_a, neuron_data_b, n_outer_splits=5, n_inner_splits=5):
+def cross_predict_regions(
+    neuron_data_a, neuron_data_b, cv_splits, alphas_to_test, n_inner_splits=5
+):
     """
     Performs nested cross-validation to predict Region B from Region A using Ridge Regression.
 
@@ -47,13 +49,9 @@ def cross_predict_regions(neuron_data_a, neuron_data_b, n_outer_splits=5, n_inne
     X = np.asarray(neuron_data_a)
     Y = np.asarray(neuron_data_b)
 
-    alphas_to_test = np.logspace(-3, 4, 20)
-
-    kf_outer = KFold(n_splits=n_outer_splits, shuffle=True, random_state=42)
-
     results = {"test_indices": [], "y_true": [], "y_pred": [], "r2_scores": [], "best_alphas": []}
 
-    for train_idx, test_idx in kf_outer.split(X):
+    for train_idx, test_idx in cv_splits:
 
         X_train, X_test = X[train_idx], X[test_idx]
         Y_train, Y_test = Y[train_idx], Y[test_idx]
@@ -83,8 +81,19 @@ def compute_cross_temporal_matrix(
     Computes the cross-temporal generalization matrix between two sets of regions and epochs.
     """
     framewise_data = defaultdict(lambda: defaultdict(dict))
-    total_frames_a = data_epoch_a[0].shape[1]
-    total_frames_b = data_epoch_b[0].shape[1]
+    total_frames_a = data_epoch_a[0].shape[0]
+    total_frames_b = data_epoch_b[0].shape[0]
+    n_trials = data_epoch_a[0].shape[2]
+
+    # clean up names
+    clean_regions_a = [str(r[0]) if isinstance(r, np.ndarray) else str(r) for r in regions_a]
+    clean_regions_b = [str(r[0]) if isinstance(r, np.ndarray) else str(r) for r in regions_b]
+    regions_a = clean_regions_a
+    regions_b = clean_regions_b
+
+    kf_outer = KFold(n_splits=5, shuffle=True, random_state=42)
+    cv_splits = list(kf_outer.split(np.arange(n_trials)))
+    alphas_to_test = np.logspace(-3, 4, 20)
 
     for region_a_idx, reg_a_name in enumerate(tqdm(regions_a, desc=desc_label)):
         for region_b_idx, reg_b_name in enumerate(regions_b):
@@ -93,10 +102,12 @@ def compute_cross_temporal_matrix(
                 for f_b in range(total_frames_b):
                     region_b = data_epoch_b[region_b_idx][f_b, :].T
 
-                    results = cross_predict_regions(region_a, region_b)
+                    results = cross_predict_regions(
+                        region_a, region_b, cv_splits=cv_splits, alphas_to_test=alphas_to_test
+                    )
                     framewise_data[reg_a_name][reg_b_name][(f_a, f_b)] = results
-
-    return framewise_data
+    clean_dict = {k: dict(v) for k, v in framewise_data.items()}
+    return clean_dict
 
 
 def cross_epoch_predict_animal(eid):
@@ -130,6 +141,21 @@ def cross_epoch_predict_animal(eid):
     choice_frames = config["choice_frames"]
     prior_frames = config["prior_frames"]
 
+    data_epoch_prior, actual_regions_prior = prepare_widefield(
+        one,
+        eid,
+        hemisphere=config["hemisphere"],
+        regions=all_regions,
+        align_times=align_times_prior,
+        frame_window=prior_frames,
+        functional_channel=470,
+        stage_only=False,
+    )
+    data_epoch_prior, used_regions_prior = check_minimum(
+        data_epoch_prior, actual_regions_prior, config
+    )
+    logger.info(f"Loaded prior data for {eid}")
+
     data_epoch_stim, actual_regions_stim = prepare_widefield(
         one,
         eid,
@@ -139,6 +165,9 @@ def cross_epoch_predict_animal(eid):
         frame_window=stimulus_frames,
         functional_channel=470,
         stage_only=False,
+    )
+    data_epoch_stim, used_regions_stim = check_minimum(
+        data_epoch_stim, actual_regions_stim, config
     )
 
     logger.info(f"Loaded stimulus data for {eid}")
@@ -154,30 +183,15 @@ def cross_epoch_predict_animal(eid):
         stage_only=False,
     )
 
-    logger.info(f"Loaded choice data for {eid}")
-
-    data_epoch_prior, actual_regions_prior = prepare_widefield(
-        one,
-        eid,
-        hemisphere=config["hemisphere"],
-        regions=all_regions,
-        align_times=align_times_prior,
-        frame_window=prior_frames,
-        functional_channel=470,
-        stage_only=False,
+    data_epoch_choice, used_regions_choice = check_minimum(
+        data_epoch_choice, actual_regions_choice, config
     )
 
-    logger.info(f"Loaded prior data for {eid}")
+    logger.info(f"Loaded choice data for {eid}")
 
     # now what
     # stim predicts choice?
     # prior predicts choice?
-
-    data_epoch_stim, used_regions_stim = check_minimum(data_epoch_stim, actual_regions_stim)
-    data_epoch_choice, used_regions_choice = check_minimum(
-        data_epoch_choice, actual_regions_choice
-    )
-    data_epoch_prior, used_regions_prior = check_minimum(data_epoch_prior, actual_regions_prior)
 
     framewise_data_stim_choice = defaultdict(lambda: defaultdict(dict))
     framewise_data_prior_choice = defaultdict(lambda: defaultdict(dict))
