@@ -23,18 +23,18 @@ def extract_records(data_dict, source_type, animal_idx):
                 r2 = metrics.get("r2_scores")
 
                 if isinstance(r2, (list, np.ndarray)):
-                    for score in r2:
-                        records.append(
-                            {
-                                "animal_idx": animal_idx,
-                                "region_1": region_1,
-                                "region_2": region_2,
-                                "source_type": source_type,
-                                "source_frame": source_frame,
-                                "choice_frame": choice_frame,
-                                "r2_score": score,
-                            }
-                        )
+                    records.append(
+                        {
+                            "animal_idx": animal_idx,
+                            "region_1": region_1,
+                            "region_2": region_2,
+                            "source_type": source_type,
+                            "source_frame": source_frame,
+                            "choice_frame": choice_frame,
+                            "r2_mean": np.mean(r2),
+                            "r2_std": np.std(r2),
+                        }
+                    )
                 else:
                     records.append(
                         {
@@ -44,7 +44,8 @@ def extract_records(data_dict, source_type, animal_idx):
                             "source_type": source_type,
                             "source_frame": source_frame,
                             "choice_frame": choice_frame,
-                            "r2_score": r2,
+                            "r2_mean": r2,
+                            "r2_std": 0.0,
                         }
                     )
     return records
@@ -136,8 +137,8 @@ if __name__ == "__main__":
                 data_stim = pkl.load(fa)
                 data_prior = pkl.load(fb)
 
-            records_stim = extract_records(data_stim, "Stimulus", idx)
-            records_prior = extract_records(data_prior, "Prior", idx)
+            records_stim = extract_records(data_stim, "Stimulus", eid)
+            records_prior = extract_records(data_prior, "Prior", eid)
 
             all_records.extend(records_stim)
             all_records.extend(records_prior)
