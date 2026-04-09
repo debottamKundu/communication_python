@@ -3,6 +3,7 @@ import pickle as pkl
 import pandas as pd
 import numpy as np
 from one.api import ONE
+from tqdm import tqdm
 
 
 def flatten_prediction_dict(animal_dict, source_type, animal_id):
@@ -46,16 +47,12 @@ def flatten_prediction_dict(animal_dict, source_type, animal_id):
 
 if __name__ == "__main__":
 
-    one = ONE(
-        base_url="https://openalyx.internationalbrainlab.org",
-        password="international",
-        silent=True,
-        username="intbrainlab",
-    )
-    sessions = one.search(datasets="widefieldU.images.npy")
+    all_eids = glob("./data/crossprediction/*")
+    sessions = [eid.split("/")[-1].split("_")[0] for eid in all_eids]
+    sessions = np.unique(sessions)
 
     df_all = []
-    for idx, eid in enumerate(sessions):
+    for idx, eid in tqdm(enumerate(sessions)):
 
         filea = f"./data/crossprediction/{eid}_results_stim_choice.pkl"
         fileb = f"./data/crossprediction/{eid}_results_prior_choice.pkl"
