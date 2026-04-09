@@ -2,6 +2,7 @@ from glob import glob
 import pickle as pkl
 import pandas as pd
 import numpy as np
+from one.api import ONE
 
 
 def flatten_prediction_dict(animal_dict, source_type, animal_id):
@@ -45,33 +46,39 @@ def flatten_prediction_dict(animal_dict, source_type, animal_id):
 
 if __name__ == "__main__":
 
-    files_stim = glob("./data/crossprediction/*_stim*.pkl")
-    files_prior = glob("./data/crossprediction/*_prior*.pkl")
+    one = ONE(
+        base_url="https://openalyx.internationalbrainlab.org",
+        password="international",
+        silent=True,
+        username="intbrainlab",
+    )
+    sessions = one.search(datasets="widefieldU.images.npy")
 
-    # get eid
     df_all = []
-    for idx, (filea, fileb) in enumerate(zip(files_stim, files_prior)):
-        eid_a = filea.split("/")[-1].split("_")[0]
-        eid_b = fileb.split("/")[-1].split("_")[0]
-        assert eid_a == eid_b
-        # check eids are the same
-        data_stim = pkl.load(open(filea, "rb"))
-        data_prior = pkl.load(open(fileb, "rb"))
+    for idx, eid in enumerate(sessions):
 
-        df_stim = flatten_prediction_dict(data_stim, "Stimulus", idx)
-        df_prior = flatten_prediction_dict(data_prior, "Prior", idx)
+        filea = f"./data/crossprediction/{eid}_results_stim_choice.pkl"
+        fileb = f"./data/crossprediction/{eid}_results_prior_choice.pkl"
 
-        df_raw = pd.concat([df_prior, df_stim], ignore_index=True)
+        try:
 
-        # do some housekeeping, throw away frames I think are overlapping
-        df_raw = df_raw[
-            (~df_raw["choice_frame"].isin([0, 1]))
-            & ((df_raw["source_frame"] == 0) | (df_raw["source_frame"] == 1))
-        ]  # keep it for now
-        df_all.append(df_raw)
+            data_stim = pkl.load(open(filea, "rb"))
+            data_prior = pkl.load(open(fileb, "rb"))
+
+            df_stim = flatten_prediction_dict(data_stim, "Stimulus", idx)
+            df_prior = flatten_prediction_dict(data_prior, "Prior", idx)
+
+            df_raw = pd.concat([df_prior, df_stim], ignore_index=True)
+
+            # do some housekeeping, throw away frames I think are overlapping
+            df_raw = df_raw[
+                (~df_raw["choice_frame"].isin([0, 1]))
+                & ((df_raw["source_frame"] == 0) | (df_raw["source_frame"] == 1))
+            ]  # keep it for now
+            df_all.append(df_raw)
+        except Exception as e:
+            print(f"Error with {eid}, probably not generated yet", e)
+            continue
 
     df_all = pd.concat(df_all, ignore_index=True)
-
-    # save as parquet
-
     df_all.to_parquet("./data/crossprediction/crossprediction_results.pqt")
