@@ -14,11 +14,11 @@ def extract_records(data_dict, source_type, animal_idx):
             for frame_pair, metrics in frame_dict.items():
 
                 source_frame, choice_frame = frame_pair
-                if choice_frame in [0, 1]:
-                    continue
-                # Keep ONLY source frames 0 and 1
-                if source_frame not in [0, 1]:
-                    continue
+                # if choice_frame in [0, 1]:
+                #     continue
+                # # Keep ONLY source frames 0 and 1
+                # if source_frame not in [0, 1]:
+                #     continue
 
                 r2 = metrics.get("r2_scores")
 
