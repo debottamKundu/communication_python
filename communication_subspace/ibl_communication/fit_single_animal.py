@@ -50,12 +50,13 @@ logger = setup_logger("RidgeRegressors")
 def fit_single_animal(session_id, engagement_signal, include_reduced=False, stage_only=False):
 
     one = ONE(
-        base_url="https://openalyx.internationalbrainlab.org",
-        password="international",
-        silent=True,
-        username="intbrainlab",
-        mode="local",
+        # base_url="https://openalyx.internationalbrainlab.org",
+        # password="international",
+        # silent=True,
+        # username="intbrainlab",
+        # mode="local",
     )
+    logger.info("trials are loaded")
     trials, mask = load_trials_and_mask(
         one,
         session_id,
@@ -86,23 +87,23 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
     high_mask, low_mask = get_high_low_masks(engagement_signal)
     # logger.info(f"Computing intrinsic dimensions for {session_id}")
 
-    # stimulus_intrinsic_dimensions = get_intrinsic_dimensions(stimulus_data, high_mask, low_mask)
-    # choice_intrinsic_dimensions = get_intrinsic_dimensions(choice_data, high_mask, low_mask)
+    stimulus_intrinsic_dimensions = get_intrinsic_dimensions(stimulus_data, high_mask, low_mask)
+    choice_intrinsic_dimensions = get_intrinsic_dimensions(choice_data, high_mask, low_mask)
 
     # now for simple regressions: for all pairs of frames, we have 0,1 and 0,1
-    logger.info(f"Running pairwise regressions for {session_id}")
+    # logger.info(f"Running pairwise regressions for {session_id}")
 
-    ridge_regression_dict = {}
-    for frameidx in [0]:  # range(0, 2):  # we have two stim frames
-        for frameidy in [1]:  # range(0, 2):  # we have two choice frames
-            # cpa -> cross prediction array
-            all_cpa_high = compute_regionwise_r2(
-                stimulus_data, choice_data, frameidx, frameidy, high_mask
-            )
-            all_cpa_low = compute_regionwise_r2(
-                stimulus_data, choice_data, frameidx, frameidy, low_mask
-            )
-            ridge_regression_dict[(frameidx, frameidy)] = (all_cpa_high, all_cpa_low)
+    # ridge_regression_dict = {}
+    # for frameidx in range(0, 2):  # we have two stim frames
+    #     for frameidy in range(0, 2):  # we have two choice frames
+    #         # cpa -> cross prediction array
+    #         all_cpa_high = compute_regionwise_r2(
+    #             stimulus_data, choice_data, frameidx, frameidy, high_mask
+    #         )
+    #         all_cpa_low = compute_regionwise_r2(
+    #             stimulus_data, choice_data, frameidx, frameidy, low_mask
+    #         )
+    #         ridge_regression_dict[(frameidx, frameidy)] = (all_cpa_high, all_cpa_low)
 
     # now for reduced rank
     # let's keep this restricted
@@ -124,15 +125,15 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
 
     # save
     storage_dict = {}
-    storage_dict["ridge_regression_dict"] = ridge_regression_dict
-    # storage_dict["stimulus_intrinsic_dimensions"] = stimulus_intrinsic_dimensions
-    # storage_dict["choice_intrinsic_dimensions"] = choice_intrinsic_dimensions
+    # storage_dict["ridge_regression_dict"] = ridge_regression_dict
+    storage_dict["stimulus_intrinsic_dimensions"] = stimulus_intrinsic_dimensions
+    storage_dict["choice_intrinsic_dimensions"] = choice_intrinsic_dimensions
     if include_reduced:
         storage_dict["reduced_rank_dict"] = reduced_rank_dict
     storage_dict["regions"] = region_names_stim
 
     # save here
-    filename = f"./data/generated/wifi_accuracy_modulation/{session_id}.pkl"
+    filename = f"./data/generated/wifi_accuracy_modulation/{session_id}_intrinsic_dimensions.pkl"
     with open(filename, "wb") as f:
         pkl.dump(storage_dict, f)
 
@@ -169,8 +170,8 @@ if __name__ == "__main__":
             return 0
 
     # run a single one
-    sessions = sessions[1:]  # type: ignore
+    # sessions = sessions[1:]  # type: ignore
     # process_eid(sessions[0])
     multiprocess = True
     if multiprocess:
-        results = Parallel(n_jobs=5)(delayed(process_eid)(eid) for eid in sessions)  # type: ignore
+        results = Parallel(n_jobs=16)(delayed(process_eid)(eid) for eid in sessions)  # type: ignore
