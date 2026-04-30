@@ -1,6 +1,4 @@
-import itertools
-import concurrent.futures
-from joblib import Parallel, delayed
+import concurrent
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.discriminant_analysis import StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -21,125 +19,115 @@ import numpy as np
 import pickle as pkl
 import os
 from joblib import Parallel, delayed
-from communication_subspace.core.reducedRankcrossval import (
-    cross_validate_rrr,
-    select_optimal_dimension,
+from communication_subspace.ibl_communication.utils import (
+    check_config,
+    compute_reduced_rank_pairs,
+    compute_regionwise_r2,
+    get_high_low_masks,
+    get_intrinsic_dimensions,
+    load_widefield_epoch,
 )
-from communication_subspace.core.runFA import extract_fa_latents
-from ibl_info.decoder_pid_wifi import region_combinations, check_minimum
-from communication_subspace.ibl_communication.utils import check_config
-
-# flow:
-# for a single animal
-# load wifi data based on epoch
-# for each pair of region, find whatever is the best dimension
-# save R2, FA and dimension.
+import concurrent.futures
 
 config = check_config()
 
+# order of business.
+""" 
+1. For a given epoch
+    - for each region, estimate their intrinsic dimensionality
+    - median split engagement
+        - also estimate intrinsic dimensionality
+    - for each region,
+        - do a full ridge regression to find the optimal R2. (maybe we do subsampling later)
+        - do reduced rank regression, stop when it is 1 sem of peak ridge performance
+        - do this also after median engagement split
+"""
 
-def process_single_animal(eid, epoch):
 
-    align_event = epoch_events(epoch)  # should default to stimon
+def fit_single_animal(session_id, engagement_signal, include_reduced=False):
+
     one = ONE(
-        base_url="https://openalyx.internationalbrainlab.org",
-        password="international",
-        silent=True,
-        username="intbrainlab",
+        # base_url="https://openalyx.internationalbrainlab.org",
+        # password="international",
+        # silent=True,
+        # username="intbrainlab",
+        mode="local",
     )
-
-    sl = SessionLoader(one, eid=eid)
     trials, mask = load_trials_and_mask(
         one,
-        eid,
-        sess_loader=sl,  # using session loader to load trials so that we get proper probability
+        session_id,
         exclude_nochoice=True,
-        exclude_unbiased=True,
+        exclude_unbiased=False,
     )
+
     trials = trials[mask]
-    align_times = trials[align_event].values
+    engagement_signal = engagement_signal[mask.values]  # atleast we get the same masks
 
-    all_regions = config["widefield_regions"]
-    if epoch == "stim":
-        frames = config["stimulus_frames"]
-    elif epoch == "choice":
-        frames = config["choice_frames"]
-
-    data_epoch, actual_regions = prepare_widefield(
-        one,
-        eid,
-        hemisphere=config["hemisphere"],
-        regions=all_regions,
-        align_times=align_times,
-        frame_window=frames,
-        functional_channel=470,
-        stage_only=False,
+    stimulus_data, region_names_stim = load_widefield_epoch(
+        one, session_id, trials, config["hemisphere"], epoch="stim"
+    )
+    choice_data, region_names_choice = load_widefield_epoch(
+        one, session_id, trials, config["hemisphere"], epoch="choice"
     )
 
-    total_frames = data_epoch[0].shape[1]  # type: ignore
-    data_epoch, used_regions = check_minimum(data_epoch, actual_regions)
+    # everything is staged now.
+    assert region_names_stim == region_names_choice
 
-    framewise_data = {}
-    for frame_idx in tqdm(range(total_frames), "Processing frames"):
-        # frame_pickle_fa = {}
-        frame_pickle_rrr = {}
-        for region_a_idx in tqdm(range(len(used_regions)), "Processing regions"):
-            # run fa here, because we need to run it only once
-            region_a = data_epoch[region_a_idx][frame_idx, :].T
-            # Z, U, Q, q_opt = extract_fa_latents(region_a, q=None, var_threshold=0.95)
-            # fa_dict = {"Z": Z, "U": U, "Q": Q, "q_opt": q_opt}
-            # frame_pickle_fa[used_regions[region_a_idx]] = fa_dict
+    # get high engagement and low engagement masks
+    high_mask, low_mask = get_high_low_masks(engagement_signal)
 
-            for region_b_idx in range(len(used_regions)):
-                if region_a_idx == region_b_idx:
-                    continue
-                # region, frame x neurons x trials -> trials x neurons
+    stimulus_intrinsic_dimensions = get_intrinsic_dimensions(stimulus_data, high_mask, low_mask)
+    choice_intrinsic_dimensions = get_intrinsic_dimensions(choice_data, high_mask, low_mask)
 
-                region_b = data_epoch[region_b_idx][frame_idx, :].T
+    # now for simple regressions: for all pairs of frames, we have 0,1 and 0,1
+    ridge_regression_dict = {}
+    for frameidx in range(0, 2):  # we have two stim frames
+        for frameidy in range(0, 2):  # we have two choice frames
+            # cpa -> cross prediction array
+            all_cpa_high = compute_regionwise_r2(
+                stimulus_data, choice_data, frameidx, frameidy, high_mask
+            )
+            all_cpa_low = compute_regionwise_r2(
+                stimulus_data, choice_data, frameidx, frameidy, low_mask
+            )
+            ridge_regression_dict[(frameidx, frameidy)] = (all_cpa_high, all_cpa_low)
 
-                key = f"{used_regions[region_a_idx]}_{used_regions[region_b_idx]}"
+    # now for reduced rank
+    # let's keep this restricted
 
-                # run fa and rrr.
-                cv_folds = config["cv_folds"]
-                dimensions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30]
-                n_source_voxels = region_a.shape[1]
-                n_target_voxels = region_b.shape[1]
-                max_possible_rank = min(n_source_voxels, n_target_voxels)
-                valid_dims = [d for d in dimensions if d <= max_possible_rank]
-                # valid_dims = np.arange(1, max_possible_rank)
-                cv_results = cross_validate_rrr(region_a, region_b, valid_dims, k_folds=cv_folds)
-                # just keep the cv_results
-                rrr_dict = {"cv_results": cv_results}
-                frame_pickle_rrr[key] = rrr_dict
+    if include_reduced:
+        reduced_rank_dict = {}
 
-        framewise_data[frame_idx] = {"fa": {}, "rrr": frame_pickle_rrr}
+        for frameidx in range(0, 2):
+            for frameidy in range(0, 2):
 
-    return framewise_data
+                reduced_rank_high = compute_reduced_rank_pairs(
+                    stimulus_data, choice_data, frameidx, frameidy, high_mask
+                )
+                reduced_rank_low = compute_reduced_rank_pairs(
+                    stimulus_data, choice_data, frameidx, frameidy, low_mask
+                )
+                reduced_rank_dict[(frameidx, frameidy)] = (reduced_rank_high, reduced_rank_low)
 
+    # save
+    storage_dict = {}
+    storage_dict["ridge_regression_dict"] = ridge_regression_dict
+    storage_dict["stimulus_intrinsic_dimensions"] = stimulus_intrinsic_dimensions
+    storage_dict["choice_intrinsic_dimensions"] = choice_intrinsic_dimensions
+    if include_reduced:
+        storage_dict["reduced_rank_dict"] = reduced_rank_dict
+    storage_dict["regions"] = region_names_stim
 
-def process_session(session_id):
-    try:
-        frame_data_stim = process_single_animal(session_id, "stim")
-        with open(f"./data/generated/{session_id}_rrr_fa_results_stim.pkl", "wb") as f:
-            pkl.dump(frame_data_stim, f)
-    except Exception as e:
-        print(e)
-        return -1
-
-    try:
-        frame_data_choice = process_single_animal(session_id, "choice")
-        with open(f"./data/generated/{session_id}_rrr_fa_results_choice.pkl", "wb") as f:
-            pkl.dump(frame_data_choice, f)
-    except Exception as e:
-        print(e)
-        return -1
+    # save here
+    filename = f"./data/generated/wifi_accuracy_modulation/{session_id}.pkl"
+    with open(filename, "wb") as f:
+        pkl.dump(storage_dict, f)
 
     return 1
 
 
 if __name__ == "__main__":
 
-    print(config)
     one = ONE(
         base_url="https://openalyx.internationalbrainlab.org",
         password="international",
@@ -147,15 +135,33 @@ if __name__ == "__main__":
         username="intbrainlab",
     )
     sessions = one.search(datasets="widefieldU.images.npy")
-    print(f"{len(sessions)} sessions with widefield data found")  # type: ignore
+    print(f"{len(sessions)} sessions with widefield data found")
 
-    # session_id = sessions[0]  # type: ignore
-    # process_session(session_id)
+    engagement_dir = "/usr/people/kundu/code/ibl-manifold/data/generated"
 
-    # run for a single animal:
+    with open(f"{engagement_dir}/all_eids_engagement.pkl", "rb") as f:
+        engagement_pickle = pkl.load(f)
 
-    n_cores = 8  # type: ignore
-    results = Parallel(n_jobs=n_cores, verbose=10)(delayed(process_session)(session) for session in sessions)  # type: ignore
+    def process_eid(eid):
+        engagement_signal = engagement_pickle[eid]
 
-    print(f"Successes: {results.count(1)}")  # type: ignore
-    print(f"Failures: {results.count(-1)}")  # type: ignore
+        fit_single_animal(
+            session_id=eid,
+            engagement_signal=engagement_signal,
+        )
+
+    # run a single one
+    # process_eid(list_of_eids[0])
+
+    multiprocess = True
+    if multiprocess:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=100) as executor:
+
+            futures = {executor.submit(process_eid, eid): eid for eid in sessions}
+
+            for future in concurrent.futures.as_completed(futures):
+                eid = futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f"Session {eid} generated an exception: {exc}")
