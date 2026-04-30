@@ -92,8 +92,8 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
     logger.info(f"Running pairwise regressions for {session_id}")
 
     ridge_regression_dict = {}
-    for frameidx in range(0, 2):  # we have two stim frames
-        for frameidy in range(0, 2):  # we have two choice frames
+    for frameidx in [0]:  # range(0, 2):  # we have two stim frames
+        for frameidy in [1]:  # range(0, 2):  # we have two choice frames
             # cpa -> cross prediction array
             all_cpa_high = compute_regionwise_r2(
                 stimulus_data, choice_data, frameidx, frameidy, high_mask
@@ -124,8 +124,8 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
     # save
     storage_dict = {}
     storage_dict["ridge_regression_dict"] = ridge_regression_dict
-    storage_dict["stimulus_intrinsic_dimensions"] = stimulus_intrinsic_dimensions
-    storage_dict["choice_intrinsic_dimensions"] = choice_intrinsic_dimensions
+    # storage_dict["stimulus_intrinsic_dimensions"] = stimulus_intrinsic_dimensions
+    # storage_dict["choice_intrinsic_dimensions"] = choice_intrinsic_dimensions
     if include_reduced:
         storage_dict["reduced_rank_dict"] = reduced_rank_dict
     storage_dict["regions"] = region_names_stim

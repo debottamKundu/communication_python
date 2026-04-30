@@ -143,9 +143,12 @@ def compute_regionwise_r2(data_a, data_b, frameidx, frameidy, trialmask=None):
     cross_array_predictions = np.zeros((n_regions, n_regions))
     if trialmask is None:
         trialmask = np.ones(data_a[0].shape[1], dtype=bool)
-    for idx in tqdm(range(n_regions)):
+    for idx in tqdm(range(n_regions), leave=False):
         region_x = data_a[idx][frameidx, trialmask, :]
-        for idy in tqdm(range(n_regions)):
+        for idy in range(n_regions):
+            # skip diagonals
+            if idx == idy:
+                continue
             region_y = data_b[idy][frameidy, trialmask, :]
             cross_array_predictions[idx, idy], _ = ridgeregression(region_x, region_y)
     return cross_array_predictions
