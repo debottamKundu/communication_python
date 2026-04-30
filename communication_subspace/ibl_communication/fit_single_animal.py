@@ -27,9 +27,12 @@ from communication_subspace.ibl_communication.utils import (
     get_intrinsic_dimensions,
     load_widefield_epoch,
 )
+from communication_subspace.ibl_communication.utils import setup_logger
 import concurrent.futures
+from tqdm import tqdm
 
 config = check_config()
+logger = setup_logger("RidgeRegressors")
 
 # order of business.
 """ 
@@ -47,11 +50,10 @@ config = check_config()
 def fit_single_animal(session_id, engagement_signal, include_reduced=False):
 
     one = ONE(
-        # base_url="https://openalyx.internationalbrainlab.org",
-        # password="international",
-        # silent=True,
-        # username="intbrainlab",
-        mode="local",
+        base_url="https://openalyx.internationalbrainlab.org",
+        password="international",
+        silent=True,
+        username="intbrainlab",
     )
     trials, mask = load_trials_and_mask(
         one,
@@ -63,6 +65,8 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False):
     trials = trials[mask]
     engagement_signal = engagement_signal[mask.values]  # atleast we get the same masks
 
+    logger.info(f"Loading epoch data for {session_id}")
+    print(f"Loading epoch data for {session_id}")
     stimulus_data, region_names_stim = load_widefield_epoch(
         one, session_id, trials, config["hemisphere"], epoch="stim"
     )
@@ -75,11 +79,15 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False):
 
     # get high engagement and low engagement masks
     high_mask, low_mask = get_high_low_masks(engagement_signal)
+    logger.info(f"Computing intrinsic dimensions for {session_id}")
+    print(f"Computing intrinsic dimensions for {session_id}")
 
     stimulus_intrinsic_dimensions = get_intrinsic_dimensions(stimulus_data, high_mask, low_mask)
     choice_intrinsic_dimensions = get_intrinsic_dimensions(choice_data, high_mask, low_mask)
 
     # now for simple regressions: for all pairs of frames, we have 0,1 and 0,1
+    logger.info(f"Running pairwise regressions for {session_id}")
+    print(f"Running pairwise regressions for {session_id}")
     ridge_regression_dict = {}
     for frameidx in range(0, 2):  # we have two stim frames
         for frameidy in range(0, 2):  # we have two choice frames
@@ -100,7 +108,8 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False):
 
         for frameidx in range(0, 2):
             for frameidy in range(0, 2):
-
+                logger.info(f"Running reduced rank regressions for {session_id}")
+                print(f"Running reduced rank regressions for {session_id}")
                 reduced_rank_high = compute_reduced_rank_pairs(
                     stimulus_data, choice_data, frameidx, frameidy, high_mask
                 )
@@ -137,13 +146,13 @@ if __name__ == "__main__":
     sessions = one.search(datasets="widefieldU.images.npy")
     print(f"{len(sessions)} sessions with widefield data found")
 
-    engagement_dir = "/usr/people/kundu/code/ibl-manifold/data/generated"
+    engagement_dir = "/usr/people/kundu/code/communication_python/data/generated"
 
-    with open(f"{engagement_dir}/all_eids_engagement.pkl", "rb") as f:
+    with open(f"{engagement_dir}/wifimicemotivation.pkl.pkl", "rb") as f:
         engagement_pickle = pkl.load(f)
 
     def process_eid(eid):
-        engagement_signal = engagement_pickle[eid]
+        engagement_signal = engagement_pickle[str(eid)]
 
         fit_single_animal(
             session_id=eid,
@@ -151,11 +160,11 @@ if __name__ == "__main__":
         )
 
     # run a single one
-    # process_eid(list_of_eids[0])
+    process_eid(sessions[0])
 
-    multiprocess = True
+    multiprocess = False
     if multiprocess:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=100) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=5) as executor:
 
             futures = {executor.submit(process_eid, eid): eid for eid in sessions}
 

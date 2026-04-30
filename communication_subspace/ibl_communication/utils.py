@@ -10,6 +10,7 @@ from communication_subspace.ibl_communication.intrinsic_dimensionality import (
     compute_intrinsic_dimensionality,
 )
 from communication_subspace.ibl_communication.crossvalidated_rrr import optimize_rrr_rank
+from tqdm import tqdm
 
 
 def check_config():
@@ -20,32 +21,32 @@ def check_config():
     return config
 
 
-# def setup_logger(name="CrossPrediction", log_file="pipeline.log", level=logging.INFO):
-#     """
-#     Sets up and returns a customized logger.
-#     """
-#     logger = logging.getLogger(name)
-#     logger.setLevel(level)
+def setup_logger(name="CrossPrediction", log_file="pipeline.log", level=logging.INFO):
+    """
+    Sets up and returns a customized logger.
+    """
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
 
-#     # SAFETY CHECK: Only add handlers if the logger doesn't already have them.
-#     # This prevents duplicate log lines if the function is accidentally called twice.
-#     if not logger.handlers:
-#         # Create formatting
-#         log_format = logging.Formatter(
-#             fmt="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-#         )
+    # SAFETY CHECK: Only add handlers if the logger doesn't already have them.
+    # This prevents duplicate log lines if the function is accidentally called twice.
+    if not logger.handlers:
+        # Create formatting
+        log_format = logging.Formatter(
+            fmt="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
 
-#         # 1. Console Handler (Prints to your terminal)
-#         c_handler = logging.StreamHandler(sys.stdout)
-#         c_handler.setFormatter(log_format)
-#         logger.addHandler(c_handler)
+        # 1. Console Handler (Prints to your terminal)
+        c_handler = logging.StreamHandler(sys.stdout)
+        c_handler.setFormatter(log_format)
+        logger.addHandler(c_handler)
 
-#         # 2. File Handler (Saves to a text file)
-#         f_handler = logging.FileHandler(log_file)
-#         f_handler.setFormatter(log_format)
-#         logger.addHandler(f_handler)
+        # 2. File Handler (Saves to a text file)
+        f_handler = logging.FileHandler(log_file)
+        f_handler.setFormatter(log_format)
+        logger.addHandler(f_handler)
 
-#     return logger
+    return logger
 
 
 def get_align_times(trials, epoch):
@@ -142,9 +143,9 @@ def compute_regionwise_r2(data_a, data_b, frameidx, frameidy, trialmask=None):
     cross_array_predictions = np.zeros((n_regions, n_regions))
     if trialmask is None:
         trialmask = np.ones(data_a[0].shape[1], dtype=bool)
-    for idx in range(n_regions):
+    for idx in tqdm(range(n_regions)):
         region_x = data_a[idx][frameidx, trialmask, :]
-        for idy in range(n_regions):
+        for idy in tqdm(range(n_regions)):
             region_y = data_b[idy][frameidy, trialmask, :]
             cross_array_predictions[idx, idy], _ = ridgeregression(region_x, region_y)
     return cross_array_predictions
