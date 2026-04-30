@@ -54,6 +54,7 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
         password="international",
         silent=True,
         username="intbrainlab",
+        mode="local",
     )
     trials, mask = load_trials_and_mask(
         one,
@@ -154,25 +155,22 @@ if __name__ == "__main__":
         engagement_pickle = pkl.load(f)
 
     def process_eid(eid):
-        engagement_signal = engagement_pickle[str(eid)]
 
-        fit_single_animal(
-            session_id=eid,
-            engagement_signal=engagement_signal,
-        )
+        try:
+            engagement_signal = engagement_pickle[str(eid)]
+
+            fit_single_animal(
+                session_id=eid,
+                engagement_signal=engagement_signal,
+            )
+            return 1
+        except Exception as e:
+            logger.error(e)
+            return 0
 
     # run a single one
-    process_eid(sessions[0])
-
-    multiprocess = False
+    sessions = sessions[1:]  # type: ignore
+    # process_eid(sessions[0])
+    multiprocess = True
     if multiprocess:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=5) as executor:
-
-            futures = {executor.submit(process_eid, eid): eid for eid in sessions}
-
-            for future in concurrent.futures.as_completed(futures):
-                eid = futures[future]
-                try:
-                    future.result()
-                except Exception as exc:
-                    logger.exception(f"Session {eid} generated an exception: {exc}")
+        results = Parallel(n_jobs=5)(delayed(process_eid)(eid) for eid in sessions)  # type: ignore
