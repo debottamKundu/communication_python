@@ -341,8 +341,9 @@ def run_full_analysis(
 
     # Load trials data
     trials_path = (
-        "/Users/dkundu/Documents/phd/communication_python/data/processed/wifi_trials_df_all.pkl"
+        "/usr/people/kundu/code/communication_python/data/processed/wifi_trials_df_all.pkl"
     )
+    # local: # "/Users/dkundu/Documents/phd/communication_python/data/processed/wifi_trials_df_all.pkl"
     logger.info(f"Loading trials data from {trials_path}")
     with open(trials_path, "rb") as f:
         all_trials = pkl.load(f)
@@ -391,8 +392,28 @@ if __name__ == "__main__":
 
     # Run full pipeline
     # Use 50 null iterations, and cap RRR rank at 15
-    run_full_analysis(
-        n_pseudosessions=200,
-        max_rank_cap=15,
-        p_threshold=0.05,
+    # find sessions ids
+    one = ONE(
+        base_url="https://openalyx.internationalbrainlab.org",
+        password="international",
+        silent=True,
+        username="intbrainlab",
     )
+    sessions = one.search(datasets="widefieldU.images.npy")
+
+    session_eids = [str(sess) for sess in sessions]  # type: ignore
+    single = True
+    if single:
+        run_full_analysis(
+            session_ids=session_eids[0],
+            n_pseudosessions=200,
+            max_rank_cap=15,
+            p_threshold=0.05,
+        )
+    else:
+        run_full_analysis(
+            session_ids=session_eids,
+            n_pseudosessions=200,
+            max_rank_cap=15,
+            p_threshold=0.05,
+        )
