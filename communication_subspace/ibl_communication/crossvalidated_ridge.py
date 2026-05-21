@@ -26,6 +26,9 @@ def ridgeregression(X, Y, alphas=None, n_splits=5):
 
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
+    X = X.astype(np.float64)
+    Y = Y.astype(np.float64)
+
     mean_scores = []
     sem_scores = []
 

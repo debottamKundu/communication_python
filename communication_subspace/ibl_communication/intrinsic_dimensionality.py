@@ -61,6 +61,8 @@ def compute_intrinsic_dimensionality_fa(X, max_components=50, variance_threshold
 
 
 def compute_intrinsic_dimensionality(data, mask=None):
+
+    # NOTE: skip fa for now
     engagement_dimensions_pca = []
     engagement_dimensions_fa = []
     if mask is None:
@@ -76,11 +78,11 @@ def compute_intrinsic_dimensionality(data, mask=None):
             # now in trials x neurons
 
             pca_components, _ = compute_intrinsic_dimensionality_pca(neural_data[mask, :])
-            fa_components, _ = compute_intrinsic_dimensionality_fa(neural_data[mask, :])
+            #fa_components, _ = compute_intrinsic_dimensionality_fa(neural_data[mask, :])
             region_wise_data_pca.append(pca_components)
-            region_wise_data_fa.append(fa_components)
+            #region_wise_data_fa.append(fa_components)
 
-        engagement_dimensions_fa.append(region_wise_data_fa)
+        #engagement_dimensions_fa.append(region_wise_data_fa)
         engagement_dimensions_pca.append(region_wise_data_pca)
 
     engagement_dimensions_fa = np.asarray(engagement_dimensions_fa)

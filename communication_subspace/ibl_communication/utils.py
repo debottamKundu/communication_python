@@ -11,6 +11,7 @@ from communication_subspace.ibl_communication.intrinsic_dimensionality import (
 )
 from communication_subspace.ibl_communication.crossvalidated_rrr import optimize_rrr_rank
 from tqdm import tqdm
+from scipy.spatial import KDTree
 
 
 def check_config():
@@ -28,20 +29,16 @@ def setup_logger(name="CrossPrediction", log_file="pipeline.log", level=logging.
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # SAFETY CHECK: Only add handlers if the logger doesn't already have them.
-    # This prevents duplicate log lines if the function is accidentally called twice.
     if not logger.handlers:
-        # Create formatting
+
         log_format = logging.Formatter(
             fmt="%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
 
-        # 1. Console Handler (Prints to your terminal)
         c_handler = logging.StreamHandler(sys.stdout)
         c_handler.setFormatter(log_format)
         logger.addHandler(c_handler)
 
-        # 2. File Handler (Saves to a text file)
         f_handler = logging.FileHandler(log_file)
         f_handler.setFormatter(log_format)
         logger.addHandler(f_handler)
@@ -170,3 +167,78 @@ def compute_reduced_rank_pairs(data_a, data_b, frameidx, frameidy, trialmask):
             )  # so that we don't generate a lot of images
             subspace_dict_main[(regionidx, regionidy)] = subspace_dict
     return subspace_dict_main
+
+
+def compute_regionwise_null_r2(
+    data_a, data_b, frameidx, frameidy, candidate_trials_matrix, n_iterations=200
+):
+    """
+    Computes the null distribution by using candidate trials which are the closest behaviorally similar trials.
+    Returns a 3D array of shape (n_regions, n_regions, n_iterations).
+    """
+    n_regions = len(data_a)
+
+    assert n_iterations == candidate_trials_matrix.shape[1]
+
+    null_distributions = np.zeros((n_regions, n_regions, n_iterations))
+
+    for idy in tqdm(range(n_regions), desc="Target Regions (Nulls)", leave=False):
+        base_region_y = data_b[idy][frameidy, :, :]
+
+        shifted_targets = []
+        for iter_idx in range(n_iterations):
+            trial_order = candidate_trials_matrix[:, iter_idx]
+            pseudosession_y = base_region_y[trial_order, :]
+            shifted_targets.append(pseudosession_y)
+
+        for idx in range(n_regions):
+            if idx == idy:
+                continue
+
+            region_x = data_a[idx][frameidx, :, :]
+
+            for iter_idx, shifted_y in enumerate(shifted_targets):
+                r2_null, _ = ridgeregression(region_x, shifted_y)
+                null_distributions[idx, idy, iter_idx] = r2_null
+
+    return null_distributions
+
+
+def build_candidate_pools(df, feature_cols, k_neighbors=20):
+    """
+    Builds a matrix of candidate trial indices for null distributions.
+
+    Args:
+        df: Pandas DataFrame containing trial information.
+        feature_cols: List of column names to use for distance (e.g., ['sign_cont', 'prior']).
+        k_neighbors: Number of candidate trials to pool per trial.
+
+    Returns:
+        candidate_pools: (N_trials, k_neighbors) integer array of trial indices.
+    """
+
+    features = df[feature_cols].values.astype(float)
+
+    # min max transform, but is it necessary?
+    min_vals = np.min(features, axis=0)
+    max_vals = np.max(features, axis=0)
+
+    range_vals = np.where((max_vals - min_vals) == 0, 1, max_vals - min_vals)
+    features_norm = (features - min_vals) / range_vals
+
+    tree = KDTree(features_norm)
+    _, indices = tree.query(features_norm, k=k_neighbors + 1)
+
+    candidate_pools = indices[:, 1:]  # type: ignore
+
+    return candidate_pools
+
+
+def generate_pseudosessions(candidate_pools, n_pseudosessions=200):
+
+    n_trials, k_neighbors = candidate_pools.shape
+    random_choices = np.random.randint(0, k_neighbors, size=(n_trials, n_pseudosessions))
+    row_indices = np.arange(n_trials)[:, np.newaxis]
+    pseudosession_indices = candidate_pools[row_indices, random_choices]
+
+    return pseudosession_indices

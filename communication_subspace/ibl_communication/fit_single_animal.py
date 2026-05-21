@@ -20,16 +20,20 @@ import pickle as pkl
 import os
 from joblib import Parallel, delayed
 from communication_subspace.ibl_communication.utils import (
+    build_candidate_pools,
     check_config,
     compute_reduced_rank_pairs,
+    compute_regionwise_null_r2,
     compute_regionwise_r2,
+    generate_pseudosessions,
     get_high_low_masks,
     get_intrinsic_dimensions,
     load_widefield_epoch,
+    setup_logger,
 )
-from communication_subspace.ibl_communication.utils import setup_logger
 import concurrent.futures
 from tqdm import tqdm
+import warnings
 
 config = check_config()
 logger = setup_logger("RidgeRegressors")
@@ -47,14 +51,16 @@ logger = setup_logger("RidgeRegressors")
 """
 
 
-def fit_single_animal(session_id, engagement_signal, include_reduced=False, stage_only=False):
+def fit_single_animal(
+    session_id, complete_df, include_reduced=False, stage_only=False, n_pseudosessions=200
+):
 
     one = ONE(
         # base_url="https://openalyx.internationalbrainlab.org",
         # password="international",
         # silent=True,
         # username="intbrainlab",
-        # mode="local",
+        mode="local",
     )
     logger.info("trials are loaded")
     trials, mask = load_trials_and_mask(
@@ -64,8 +70,14 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
         exclude_unbiased=False,
     )
 
-    trials = trials[mask]
-    engagement_signal = engagement_signal[mask.values]  # atleast we get the same masks
+    # trials = trials[mask]
+    trials = complete_df[mask]
+    candidate_trials = build_candidate_pools(trials, ["sign_cont", "prior"])
+    pseudosession_matrix = generate_pseudosessions(
+        candidate_trials, n_pseudosessions=n_pseudosessions
+    )
+
+    # engagement_signal = engagement_signal[mask.values]  # atleast we get the same masks
 
     logger.info(f"Loading stimulus data for {session_id}")
 
@@ -83,12 +95,29 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
     # everything is staged now.
     assert region_names_stim == region_names_choice
 
-    # get high engagement and low engagement masks
-    high_mask, low_mask = get_high_low_masks(engagement_signal)
-    # logger.info(f"Computing intrinsic dimensions for {session_id}")
+    # 1. find regions with significant transmission
+    # just use two frames
+    frame_idx = 0
+    frame_idy = 1
 
-    stimulus_intrinsic_dimensions = get_intrinsic_dimensions(stimulus_data, high_mask, low_mask)
-    choice_intrinsic_dimensions = get_intrinsic_dimensions(choice_data, high_mask, low_mask)
+    logger.info("Computing true R2")
+    true_results = compute_regionwise_r2(stimulus_data, choice_data, frame_idx, frame_idy)
+    logger.info("Computing null R2")
+    null_results = compute_regionwise_null_r2(
+        stimulus_data,
+        choice_data,
+        frame_idx,
+        frame_idy,
+        candidate_trials_matrix=pseudosession_matrix,
+    )
+
+    ## OLD CODE
+    # # get high engagement and low engagement masks
+    # high_mask, low_mask = get_high_low_masks(engagement_signal)
+    # # logger.info(f"Computing intrinsic dimensions for {session_id}")
+
+    # stimulus_intrinsic_dimensions = get_intrinsic_dimensions(stimulus_data, high_mask, low_mask)
+    # choice_intrinsic_dimensions = get_intrinsic_dimensions(choice_data, high_mask, low_mask)
 
     # now for simple regressions: for all pairs of frames, we have 0,1 and 0,1
     # logger.info(f"Running pairwise regressions for {session_id}")
@@ -108,32 +137,34 @@ def fit_single_animal(session_id, engagement_signal, include_reduced=False, stag
     # now for reduced rank
     # let's keep this restricted
 
-    if include_reduced:
-        reduced_rank_dict = {}
+    # if include_reduced:
+    #     reduced_rank_dict = {}
 
-        for frameidx in range(0, 2):
-            for frameidy in range(0, 2):
-                logger.info(f"Running reduced rank regressions for {session_id}")
+    #     for frameidx in range(0, 2):
+    #         for frameidy in range(0, 2):
+    #             logger.info(f"Running reduced rank regressions for {session_id}")
 
-                reduced_rank_high = compute_reduced_rank_pairs(
-                    stimulus_data, choice_data, frameidx, frameidy, high_mask
-                )
-                reduced_rank_low = compute_reduced_rank_pairs(
-                    stimulus_data, choice_data, frameidx, frameidy, low_mask
-                )
-                reduced_rank_dict[(frameidx, frameidy)] = (reduced_rank_high, reduced_rank_low)
+    #             reduced_rank_high = compute_reduced_rank_pairs(
+    #                 stimulus_data, choice_data, frameidx, frameidy, high_mask
+    #             )
+    #             reduced_rank_low = compute_reduced_rank_pairs(
+    #                 stimulus_data, choice_data, frameidx, frameidy, low_mask
+    #             )
+    #             reduced_rank_dict[(frameidx, frameidy)] = (reduced_rank_high, reduced_rank_low)
 
     # save
     storage_dict = {}
     # storage_dict["ridge_regression_dict"] = ridge_regression_dict
-    storage_dict["stimulus_intrinsic_dimensions"] = stimulus_intrinsic_dimensions
-    storage_dict["choice_intrinsic_dimensions"] = choice_intrinsic_dimensions
-    if include_reduced:
-        storage_dict["reduced_rank_dict"] = reduced_rank_dict
+    # storage_dict["stimulus_intrinsic_dimensions"] = stimulus_intrinsic_dimensions
+    # storage_dict["choice_intrinsic_dimensions"] = choice_intrinsic_dimensions
+    # if include_reduced:
+    # storage_dict["reduced_rank_dict"] = reduced_rank_dict
     storage_dict["regions"] = region_names_stim
+    storage_dict["true_r2"] = true_results
+    storage_dict["null_r2"] = null_results
 
     # save here
-    filename = f"./data/generated/wifi_accuracy_modulation/{session_id}_intrinsic_dimensions.pkl"
+    filename = f"./data/generated/r2_null_tests/{session_id}_region_predictions.pkl"
     with open(filename, "wb") as f:
         pkl.dump(storage_dict, f)
 
@@ -150,19 +181,27 @@ if __name__ == "__main__":
     )
     sessions = one.search(datasets="widefieldU.images.npy")
 
-    engagement_dir = "/usr/people/kundu/code/communication_python/data/generated"
+    # engagement_dir = "/usr/people/kundu/code/communication_python/data/generated"
 
-    with open(f"{engagement_dir}/wifimicemotivation.pkl", "rb") as f:
-        engagement_pickle = pkl.load(f)
+    # with open(f"{engagement_dir}/wifimicemotivation.pkl", "rb") as f:
+    #     engagement_pickle = pkl.load(f)
+
+    # just load the entire trial matrix
+    local_dir = "/Users/dkundu/Documents/phd/communication_python/data/processed"
+    with open(f"{local_dir}/wifi_trials_df_all.pkl", "rb") as f:
+        all_trials = pkl.load(f)
 
     def process_eid(eid):
 
         try:
-            engagement_signal = engagement_pickle[str(eid)]
+            # engagement_signal = engagement_pickle[str(eid)]
 
             fit_single_animal(
                 session_id=eid,
-                engagement_signal=engagement_signal,
+                complete_df=all_trials[str(eid)],
+                include_reduced=True,
+                stage_only=False,
+                n_pseudosessions=200,
             )
             return 1
         except Exception as e:
@@ -171,7 +210,11 @@ if __name__ == "__main__":
 
     # run a single one
     # sessions = sessions[1:]  # type: ignore
-    # process_eid(sessions[0])
-    multiprocess = True
+    multiprocess = False  # multiprocess is only on server
+    if not multiprocess:
+        warnings.filterwarnings("ignore")
+
+    process_eid(sessions[0])  # type: ignore
+
     if multiprocess:
         results = Parallel(n_jobs=16)(delayed(process_eid)(eid) for eid in sessions)  # type: ignore

@@ -8,13 +8,15 @@ from communication_subspace.adapted.rrr import svd_RRR
 from matplotlib import pyplot as plt
 
 
-def optimize_rrr_rank(X, Y, optimal_lambda=0, n_splits=5, viz=True, detailed=True):
+def optimize_rrr_rank(X, Y, optimal_lambda=0, n_splits=5, viz=True, detailed=True, max_rank=None):
     """
     Finds the optimal communication rank using 5-fold CV and the 1-SEM rule.
     Plots the R^2 curve against rank dimensionality.
     """
-    max_rank = min(X.shape[1], Y.shape[1])
-    ranks_to_test = np.arange(1, max_rank + 1)
+    limit = min(X.shape[1], Y.shape[1])
+    if max_rank is not None:
+        limit = min(limit, max_rank)
+    ranks_to_test = np.arange(1, limit + 1)
 
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
