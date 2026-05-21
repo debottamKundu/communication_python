@@ -10,7 +10,7 @@ from tqdm import tqdm
 from brainwidemap import bwm_loading
 
 # # Suppress sklearn and runtime warnings to keep logs clean
-# warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore")
 
 from one.api import ONE
 from communication_subspace.ibl_communication.utils import (
@@ -78,7 +78,7 @@ def compute_regionwise_r2_with_alphas(data_a, data_b, frameidx, frameidy, trialm
     if trialmask is None:
         trialmask = np.ones(data_a[0].shape[1], dtype=bool)
 
-    for idx in range(n_regions):
+    for idx in tqdm(range(n_regions), desc="True Ridge Regressions", leave=False):
         region_x = data_a[idx][frameidx, trialmask, :]
         for idy in range(n_regions):
             if idx == idy:
@@ -95,13 +95,17 @@ def compute_regionwise_null_r2_fast(
     data_a, data_b, frameidx, frameidy, candidate_trials_matrix, optimal_alphas, n_iterations=50
 ):
     """
-    Fast computation of null distribution using pre-computed optimal alphas.
+    Blazing fast computation of null distribution.
+    Pre-computes the (X^T X + alpha I)^-1 X^T projection matrix and StandardScalers for X
+    once per fold, since X never changes during permutation testing.
+    Reduces complexity from O(Nulls * Features^3) to O(Features^3 + Nulls * Features^2).
     """
     n_regions = len(data_a)
     null_distributions = np.zeros((n_regions, n_regions, n_iterations))
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-    for idy in range(n_regions):
-        base_region_y = data_b[idy][frameidy, :, :]
+    for idy in tqdm(range(n_regions), desc="Null Ridge Regressions (Target)", leave=False):
+        base_region_y = data_b[idy][frameidy, :, :].astype(np.float64)
 
         # Pre-generate shifted targets for all iterations
         shifted_targets = []
@@ -113,12 +117,60 @@ def compute_regionwise_null_r2_fast(
             if idx == idy:
                 continue
 
-            region_x = data_a[idx][frameidx, :, :]
+            region_x = data_a[idx][frameidx, :, :].astype(np.float64)
             alpha = optimal_alphas[idx, idy]
 
+            # 1. Precompute X fold structures and projection matrices
+            fold_data = []
+            for train_idx, test_idx in kf.split(region_x):
+                X_train, X_test = region_x[train_idx], region_x[test_idx]
+
+                mean_X = np.mean(X_train, axis=0)
+                std_X = np.std(X_train, axis=0)
+                std_X[std_X == 0] = 1.0
+
+                X_tr_sc = (X_train - mean_X) / std_X
+                X_te_sc = (X_test - mean_X) / std_X
+
+                n_feat = X_tr_sc.shape[1]
+                XTX = X_tr_sc.T @ X_tr_sc
+                XTX[np.diag_indices(n_feat)] += alpha
+
+                try:
+                    Proj = np.linalg.solve(XTX, X_tr_sc.T)
+                except np.linalg.LinAlgError:
+                    Proj = np.linalg.pinv(XTX) @ X_tr_sc.T
+
+                fold_data.append((train_idx, test_idx, X_te_sc, Proj))
+
+            # 2. Iterate through permuted Y targets using precomputed X Projections
             for iter_idx in range(n_iterations):
-                r2_null = ridgeregression_fixed_alpha(region_x, shifted_targets[iter_idx], alpha)
-                null_distributions[idx, idy, iter_idx] = r2_null
+                Y_null = shifted_targets[iter_idx]
+                fold_scores = []
+
+                for train_idx, test_idx, X_te_sc, Proj in fold_data:
+                    Y_train, Y_test = Y_null[train_idx], Y_null[test_idx]
+
+                    mean_Y = np.mean(Y_train, axis=0)
+                    std_Y = np.std(Y_train, axis=0)
+                    std_Y[std_Y == 0] = 1.0
+
+                    Y_tr_sc = (Y_train - mean_Y) / std_Y
+                    Y_te_sc = (Y_test - mean_Y) / std_Y
+
+                    # W = Proj @ Y_tr_sc
+                    Y_pred = X_te_sc @ (Proj @ Y_tr_sc)
+
+                    # Vectorized R2 Score perfectly mirroring sklearn logic
+                    ss_res = np.sum((Y_te_sc - Y_pred) ** 2, axis=0)
+                    ss_tot = np.sum((Y_te_sc - np.mean(Y_te_sc, axis=0)) ** 2, axis=0)
+                    nonzero = ss_tot > 1e-10
+                    r2_arr = np.zeros(Y_te_sc.shape[1])
+                    r2_arr[nonzero] = 1 - ss_res[nonzero] / ss_tot[nonzero]
+
+                    fold_scores.append(np.mean(r2_arr))
+
+                null_distributions[idx, idy, iter_idx] = np.mean(fold_scores)
 
     return null_distributions
 
@@ -133,10 +185,14 @@ def process_single_session_worker(args):
         p_threshold,
         output_dir,
         run_behavioral_alignment,
+        fast_null,
+        min_r2_threshold,
     ) = args
     from one.api import ONE
     import traceback
+    import time
 
+    start_time = time.time()
     try:
         one = ONE(mode="local")
         logger.info(f"========== Processing Session {eid} ==========")
@@ -150,9 +206,9 @@ def process_single_session_worker(args):
 
         if np.sum(~mask) > 0:
             logger.warning(
-                f"Session {eid}: Dropping {np.sum(~mask)} trials using canonical IBL mask."
+                f"Session {eid}: Dropping {np.sum(~mask)} out of {len(trials)} trials using canonical IBL mask."
             )
-            trials = trials.iloc[mask].reset_index(drop=True)
+            trials = trials[mask].reset_index(drop=True)
 
         # Load widefield data for stimulus and choice epochs
         logger.info(f"Loading widefield data for session {eid}")
@@ -193,7 +249,7 @@ def process_single_session_worker(args):
 
         # Compute true and null Ridge regression for all trials
         # We look at frame_idx=0 (stimOn) and frame_idy=1 (movement)
-        frame_idx = 0
+        frame_idx = 1
         frame_idy = 1
 
         logger.info("Computing true Ridge R^2 and optimal alphas...")
@@ -212,19 +268,42 @@ def process_single_session_worker(args):
         logger.info(
             f"Generating proper null distributions (N={n_pseudosessions} pseudo-sessions)..."
         )
-        candidate_trials = build_candidate_pools(trials, ["sign_cont", "prior"])
+
+        # Dynamically build features for the null distribution KDTree
+        kd_features = ["sign_cont", "prior"]
+        if "engagement" in trials.columns:
+            kd_features.append("engagement")
+        elif "motivation" in trials.columns:
+            kd_features.append("motivation")
+
+        candidate_trials = build_candidate_pools(trials, kd_features)
         pseudosession_matrix = generate_pseudosessions(
             candidate_trials, n_pseudosessions=n_pseudosessions
         )
-        null_ridge_r2 = compute_regionwise_null_r2_fast(
-            stimulus_data,
-            choice_data,
-            frame_idx,
-            frame_idy,
-            candidate_trials_matrix=pseudosession_matrix,
-            optimal_alphas=optimal_alphas,
-            n_iterations=n_pseudosessions,
-        )
+        if fast_null:
+            null_ridge_r2 = compute_regionwise_null_r2_fast(
+                stimulus_data,
+                choice_data,
+                frame_idx,
+                frame_idy,
+                candidate_trials_matrix=pseudosession_matrix,
+                optimal_alphas=optimal_alphas,
+                n_iterations=n_pseudosessions,
+            )
+        else:
+            from communication_subspace.ibl_communication.utils import (
+                compute_regionwise_null_r2,
+                compute_regionwise_null_r2_svd,
+            )
+
+            null_ridge_r2 = compute_regionwise_null_r2_svd(
+                stimulus_data,
+                choice_data,
+                frame_idx,
+                frame_idy,
+                candidate_trials_matrix=pseudosession_matrix,
+                n_iterations=n_pseudosessions,
+            )
 
         # Calculate p-values for All trials
         logger.info("Calculating empirical p-values from null distributions...")
@@ -237,14 +316,40 @@ def process_single_session_worker(args):
                 null_vals = null_ridge_r2[idx, idy, :]
                 p_values[idx, idy] = (np.sum(null_vals >= true_val) + 1) / (len(null_vals) + 1)
 
+        # Apply FDR correction (Benjamini-Hochberg)
+        logger.info("Applying Benjamini-Hochberg FDR correction to region pairs...")
+        try:
+            from statsmodels.stats.multitest import fdrcorrection
+
+            valid_p_indices = []
+            valid_p_vals = []
+            for idx in range(n_regions):
+                for idy in range(n_regions):
+                    if idx != idy and true_ridge_r2[idx, idy] > min_r2_threshold:
+                        valid_p_indices.append((idx, idy))
+                        valid_p_vals.append(p_values[idx, idy])
+
+            if len(valid_p_vals) > 0:
+                rejected, pvals_corrected = fdrcorrection(valid_p_vals, alpha=p_threshold)
+
+                p_values_fdr = np.ones((n_regions, n_regions))
+                for (idx, idy), p_corr in zip(valid_p_indices, pvals_corrected):
+                    p_values_fdr[idx, idy] = p_corr
+
+                p_values = p_values_fdr
+        except ImportError:
+            logger.warning("statsmodels not installed, skipping FDR correction!")
+
         # Filter for significant region pairs and run RRR / subspace alignment
-        logger.info(f"Filtering significant pairs (p < {p_threshold} and R^2 > 0)...")
+        logger.info(
+            f"Filtering significant pairs (FDR p < {p_threshold} and R^2 > {min_r2_threshold})..."
+        )
         significant_pairs = []
         for idx in range(n_regions):
             for idy in range(n_regions):
                 if idx == idy:
                     continue
-                if p_values[idx, idy] < p_threshold and true_ridge_r2[idx, idy] > 0:
+                if p_values[idx, idy] < p_threshold and true_ridge_r2[idx, idy] > min_r2_threshold:
                     significant_pairs.append((idx, idy))
 
         logger.info(
@@ -322,14 +427,22 @@ def process_single_session_worker(args):
             },
         }
 
-        filename = os.path.join(output_dir, f"{eid}_rrr_results.pkl")
+        filename = os.path.join(output_dir, f"{eid}_rrr_results_svd_null_frame1.pkl")
         with open(filename, "wb") as f:
             pkl.dump(storage_dict, f)
+
+        end_time = time.time()
+        duration_mins = (end_time - start_time) / 60.0
         logger.info(f"Saved session results to {filename}")
+        logger.info(
+            f"====== Session {eid} finished successfully in {duration_mins:.2f} minutes ======"
+        )
         return eid, True
 
     except Exception as e:
-        logger.error(f"Failed to process session {eid}: {e}")
+        end_time = time.time()
+        duration_mins = (end_time - start_time) / 60.0
+        logger.error(f"Failed to process session {eid} after {duration_mins:.2f} minutes: {e}")
         logger.error(traceback.format_exc())
         return eid, False
 
@@ -341,6 +454,8 @@ def run_full_analysis(
     p_threshold=0.05,
     output_dir="./data/generated/rrr_analysis",
     run_behavioral_alignment=False,
+    fast_null=True,
+    min_r2_threshold=0.0,
 ):
     """
     Loads widefield data, partitions trials into engagement states,
@@ -358,7 +473,10 @@ def run_full_analysis(
     trials_path = (
         "/usr/people/kundu/code/communication_python/data/processed/wifi_trials_df_all.pkl"
     )
-    # local: # "/Users/dkundu/Documents/phd/communication_python/data/processed/wifi_trials_df_all.pkl"
+    # local:
+    # trials_path = (
+    #     "/Users/dkundu/Documents/phd/communication_python/data/processed/wifi_trials_df_all.pkl"
+    # )
     logger.info(f"Loading trials data from {trials_path}")
     with open(trials_path, "rb") as f:
         all_trials = pkl.load(f)
@@ -379,6 +497,8 @@ def run_full_analysis(
                 p_threshold,
                 output_dir,
                 run_behavioral_alignment,
+                fast_null,
+                min_r2_threshold,
             )
         )
 
@@ -417,13 +537,14 @@ if __name__ == "__main__":
     sessions = one.search(datasets="widefieldU.images.npy")
 
     session_eids = np.asarray([str(sess) for sess in sessions])  # type: ignore
-    single = True
+    single = False
     if single:
         run_full_analysis(
             session_ids=[session_eids[0]],
             n_pseudosessions=200,
             max_rank_cap=15,
             p_threshold=0.05,
+            fast_null=False,
         )
     else:
         run_full_analysis(
@@ -431,4 +552,5 @@ if __name__ == "__main__":
             n_pseudosessions=200,
             max_rank_cap=15,
             p_threshold=0.05,
+            fast_null=False,
         )

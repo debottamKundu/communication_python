@@ -68,8 +68,9 @@ def compute_intrinsic_dimensionality(data, mask=None):
     if mask is None:
         mask = np.ones(data[0].shape[1], dtype=bool)
 
+    from tqdm import tqdm
     # data is now regions x (frames x trials x voxels)
-    for neural_data_frames in data:
+    for neural_data_frames in tqdm(data, desc="Computing Intrinsic Dim", leave=False):
         # first choose the proper frame
         region_wise_data_pca = []
         region_wise_data_fa = []
