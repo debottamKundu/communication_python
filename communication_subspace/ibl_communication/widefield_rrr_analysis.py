@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 
-# Suppress sklearn and runtime warnings to keep logs clean
-warnings.filterwarnings("ignore")
+# # Suppress sklearn and runtime warnings to keep logs clean
+# warnings.filterwarnings("ignore")
 
 from one.api import ONE
 from communication_subspace.ibl_communication.utils import (
