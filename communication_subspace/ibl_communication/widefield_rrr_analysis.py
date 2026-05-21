@@ -7,6 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+from brainwidemap import bwm_loading
 
 # # Suppress sklearn and runtime warnings to keep logs clean
 # warnings.filterwarnings("ignore")
@@ -139,6 +140,20 @@ def process_single_session_worker(args):
     try:
         one = ONE(mode="local")
         logger.info(f"========== Processing Session {eid} ==========")
+
+        _, mask = bwm_loading.load_trials_and_mask(
+            one,
+            eid,
+            exclude_nochoice=True,
+            exclude_unbiased=False,
+        )
+
+        if np.sum(~mask) > 0:
+            logger.warning(
+                f"Session {eid}: Dropping {np.sum(~mask)} trials using canonical IBL mask."
+            )
+            trials = trials.iloc[mask].reset_index(drop=True)
+
         # Load widefield data for stimulus and choice epochs
         logger.info(f"Loading widefield data for session {eid}")
 
@@ -401,11 +416,11 @@ if __name__ == "__main__":
     )
     sessions = one.search(datasets="widefieldU.images.npy")
 
-    session_eids = [str(sess) for sess in sessions]  # type: ignore
+    session_eids = np.asarray([str(sess) for sess in sessions])  # type: ignore
     single = True
     if single:
         run_full_analysis(
-            session_ids=session_eids[0],
+            session_ids=[session_eids[0]],
             n_pseudosessions=200,
             max_rank_cap=15,
             p_threshold=0.05,
