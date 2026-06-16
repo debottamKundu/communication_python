@@ -56,11 +56,11 @@ def fit_single_animal(
 ):
 
     one = ONE(
-        # base_url="https://openalyx.internationalbrainlab.org",
-        # password="international",
-        # silent=True,
-        # username="intbrainlab",
-        mode="local",
+        base_url="https://openalyx.internationalbrainlab.org",
+        password="international",
+        silent=True,
+        username="intbrainlab",
+        # mode="local",
     )
     logger.info("trials are loaded")
     trials, mask = load_trials_and_mask(
@@ -200,7 +200,7 @@ if __name__ == "__main__":
                 session_id=eid,
                 complete_df=all_trials[str(eid)],
                 include_reduced=True,
-                stage_only=False,
+                stage_only=True,
                 n_pseudosessions=200,
             )
             return 1
@@ -210,11 +210,12 @@ if __name__ == "__main__":
 
     # run a single one
     # sessions = sessions[1:]  # type: ignore
-    multiprocess = False  # multiprocess is only on server
+    multiprocess = True  # multiprocess is only on server
     if not multiprocess:
         warnings.filterwarnings("ignore")
 
-    process_eid(sessions[0])  # type: ignore
-
-    if multiprocess:
-        results = Parallel(n_jobs=16)(delayed(process_eid)(eid) for eid in sessions)  # type: ignore
+    # process_eid(sessions[0])  # type: ignore
+    for eid in tqdm(sessions):  # type: ignore
+        process_eid(eid)
+    # if multiprocess:
+    #     results = Parallel(n_jobs=16)(delayed(process_eid)(eid) for eid in sessions)  # type: ignore

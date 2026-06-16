@@ -34,7 +34,7 @@ from sklearn.preprocessing import StandardScaler
 
 logger = setup_logger("WidefieldRRR")
 
-LOCAL_EIDS = ["f7d46a15-9498-40dc-90da-fb977ce844be", "76448b54-0d56-469a-9c5b-6bdd3b7bce3d"]
+LOCAL_EIDS = ["76448b54-0d56-469a-9c5b-6bdd3b7bce3d"]
 
 
 def ridgeregression_fixed_alpha(X, Y, alpha, n_splits=5):
@@ -91,90 +91,6 @@ def compute_regionwise_r2_with_alphas(data_a, data_b, frameidx, frameidy, trialm
     return cross_array_predictions, optimal_alphas
 
 
-def compute_regionwise_null_r2_fast(
-    data_a, data_b, frameidx, frameidy, candidate_trials_matrix, optimal_alphas, n_iterations=50
-):
-    """
-    Blazing fast computation of null distribution.
-    Pre-computes the (X^T X + alpha I)^-1 X^T projection matrix and StandardScalers for X
-    once per fold, since X never changes during permutation testing.
-    Reduces complexity from O(Nulls * Features^3) to O(Features^3 + Nulls * Features^2).
-    """
-    n_regions = len(data_a)
-    null_distributions = np.zeros((n_regions, n_regions, n_iterations))
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
-
-    for idy in tqdm(range(n_regions), desc="Null Ridge Regressions (Target)", leave=False):
-        base_region_y = data_b[idy][frameidy, :, :].astype(np.float64)
-
-        # Pre-generate shifted targets for all iterations
-        shifted_targets = []
-        for iter_idx in range(n_iterations):
-            trial_order = candidate_trials_matrix[:, iter_idx]
-            shifted_targets.append(base_region_y[trial_order, :])
-
-        for idx in range(n_regions):
-            if idx == idy:
-                continue
-
-            region_x = data_a[idx][frameidx, :, :].astype(np.float64)
-            alpha = optimal_alphas[idx, idy]
-
-            # 1. Precompute X fold structures and projection matrices
-            fold_data = []
-            for train_idx, test_idx in kf.split(region_x):
-                X_train, X_test = region_x[train_idx], region_x[test_idx]
-
-                mean_X = np.mean(X_train, axis=0)
-                std_X = np.std(X_train, axis=0)
-                std_X[std_X == 0] = 1.0
-
-                X_tr_sc = (X_train - mean_X) / std_X
-                X_te_sc = (X_test - mean_X) / std_X
-
-                n_feat = X_tr_sc.shape[1]
-                XTX = X_tr_sc.T @ X_tr_sc
-                XTX[np.diag_indices(n_feat)] += alpha
-
-                try:
-                    Proj = np.linalg.solve(XTX, X_tr_sc.T)
-                except np.linalg.LinAlgError:
-                    Proj = np.linalg.pinv(XTX) @ X_tr_sc.T
-
-                fold_data.append((train_idx, test_idx, X_te_sc, Proj))
-
-            # 2. Iterate through permuted Y targets using precomputed X Projections
-            for iter_idx in range(n_iterations):
-                Y_null = shifted_targets[iter_idx]
-                fold_scores = []
-
-                for train_idx, test_idx, X_te_sc, Proj in fold_data:
-                    Y_train, Y_test = Y_null[train_idx], Y_null[test_idx]
-
-                    mean_Y = np.mean(Y_train, axis=0)
-                    std_Y = np.std(Y_train, axis=0)
-                    std_Y[std_Y == 0] = 1.0
-
-                    Y_tr_sc = (Y_train - mean_Y) / std_Y
-                    Y_te_sc = (Y_test - mean_Y) / std_Y
-
-                    # W = Proj @ Y_tr_sc
-                    Y_pred = X_te_sc @ (Proj @ Y_tr_sc)
-
-                    # Vectorized R2 Score perfectly mirroring sklearn logic
-                    ss_res = np.sum((Y_te_sc - Y_pred) ** 2, axis=0)
-                    ss_tot = np.sum((Y_te_sc - np.mean(Y_te_sc, axis=0)) ** 2, axis=0)
-                    nonzero = ss_tot > 1e-10
-                    r2_arr = np.zeros(Y_te_sc.shape[1])
-                    r2_arr[nonzero] = 1 - ss_res[nonzero] / ss_tot[nonzero]
-
-                    fold_scores.append(np.mean(r2_arr))
-
-                null_distributions[idx, idy, iter_idx] = np.mean(fold_scores)
-
-    return null_distributions
-
-
 def process_single_session_worker(args):
     (
         eid,
@@ -209,6 +125,7 @@ def process_single_session_worker(args):
                 f"Session {eid}: Dropping {np.sum(~mask)} out of {len(trials)} trials using canonical IBL mask."
             )
             trials = trials[mask].reset_index(drop=True)
+        trials["trial_number"] = trials.index
 
         # Load widefield data for stimulus and choice epochs
         logger.info(f"Loading widefield data for session {eid}")
@@ -238,17 +155,17 @@ def process_single_session_worker(args):
         logger.info(f"Engagement split: {np.sum(high_mask)} high, {np.sum(low_mask)} low trials")
 
         # Compute intrinsic dimensionality
-        logger.info("Computing intrinsic dimensionality...")
-        stim_dim_pca, _ = compute_intrinsic_dimensionality(stimulus_data)
-        stim_dim_pca_high, _ = compute_intrinsic_dimensionality(stimulus_data, mask=high_mask)
-        stim_dim_pca_low, _ = compute_intrinsic_dimensionality(stimulus_data, mask=low_mask)
+        # logger.info("Computing intrinsic dimensionality...")
+        # stim_dim_pca, _ = compute_intrinsic_dimensionality(stimulus_data)
+        # stim_dim_pca_high, _ = compute_intrinsic_dimensionality(stimulus_data, mask=high_mask)
+        # stim_dim_pca_low, _ = compute_intrinsic_dimensionality(stimulus_data, mask=low_mask)
 
-        choice_dim_pca, _ = compute_intrinsic_dimensionality(choice_data)
-        choice_dim_pca_high, _ = compute_intrinsic_dimensionality(choice_data, mask=high_mask)
-        choice_dim_pca_low, _ = compute_intrinsic_dimensionality(choice_data, mask=low_mask)
+        # choice_dim_pca, _ = compute_intrinsic_dimensionality(choice_data)
+        # choice_dim_pca_high, _ = compute_intrinsic_dimensionality(choice_data, mask=high_mask)
+        # choice_dim_pca_low, _ = compute_intrinsic_dimensionality(choice_data, mask=low_mask)
 
         # Compute true and null Ridge regression for all trials
-        # We look at frame_idx=0 (stimOn) and frame_idy=1 (movement)
+        # We look at frame_idx=1 (stimOn) and frame_idy=1 (movement)
         frame_idx = 1
         frame_idy = 1
 
@@ -258,176 +175,211 @@ def process_single_session_worker(args):
         )
 
         logger.info("Computing true Ridge R^2 for High and Low engagement splits...")
-        high_ridge_r2 = compute_regionwise_r2(
-            stimulus_data, choice_data, frame_idx, frame_idy, trialmask=high_mask
-        )
-        low_ridge_r2 = compute_regionwise_r2(
-            stimulus_data, choice_data, frame_idx, frame_idy, trialmask=low_mask
-        )
+        # high_ridge_r2 = compute_regionwise_r2(
+        #     stimulus_data, choice_data, frame_idx, frame_idy, trialmask=high_mask
+        # )
+        # low_ridge_r2 = compute_regionwise_r2(
+        #     stimulus_data, choice_data, frame_idx, frame_idy, trialmask=low_mask
+        # )
 
         logger.info(
             f"Generating proper null distributions (N={n_pseudosessions} pseudo-sessions)..."
         )
 
         # Dynamically build features for the null distribution KDTree
-        kd_features = ["sign_cont", "prior"]
-        if "engagement" in trials.columns:
-            kd_features.append("engagement")
-        elif "motivation" in trials.columns:
-            kd_features.append("motivation")
+        kd_features = ["sign_cont"]
+        # if "engagement" in trials.columns:
+        #     kd_features.append("engagement")
+        # elif "motivation" in trials.columns:
+        #     kd_features.append("motivation")
 
-        candidate_trials = build_candidate_pools(trials, kd_features)
-        pseudosession_matrix = generate_pseudosessions(
-            candidate_trials, n_pseudosessions=n_pseudosessions
+        # kd_features.append("choice")
+        kd_features.append("trial_number")
+
+        candidate_trials_all = build_candidate_pools(trials, kd_features)
+        pseudo_matrix_all = generate_pseudosessions(
+            candidate_trials_all, n_pseudosessions=n_pseudosessions
         )
-        if fast_null:
-            null_ridge_r2 = compute_regionwise_null_r2_fast(
-                stimulus_data,
-                choice_data,
-                frame_idx,
-                frame_idy,
-                candidate_trials_matrix=pseudosession_matrix,
-                optimal_alphas=optimal_alphas,
-                n_iterations=n_pseudosessions,
-            )
-        else:
-            from communication_subspace.ibl_communication.utils import (
-                compute_regionwise_null_r2,
-                compute_regionwise_null_r2_svd,
-            )
 
-            null_ridge_r2 = compute_regionwise_null_r2_svd(
-                stimulus_data,
-                choice_data,
-                frame_idx,
-                frame_idy,
-                candidate_trials_matrix=pseudosession_matrix,
-                n_iterations=n_pseudosessions,
-            )
+        # trials_high = trials[high_mask].reset_index(drop=True)
+        # candidate_trials_high = build_candidate_pools(trials_high, kd_features)
+        # pseudo_matrix_high = generate_pseudosessions(
+        #     candidate_trials_high, n_pseudosessions=n_pseudosessions
+        # )
+        # stimulus_high = [d[:, high_mask, :] for d in stimulus_data]
+        # choice_high = [d[:, high_mask, :] for d in choice_data]
 
-        # Calculate p-values for All trials
-        logger.info("Calculating empirical p-values from null distributions...")
-        p_values = np.ones((n_regions, n_regions))
-        for idx in range(n_regions):
-            for idy in range(n_regions):
-                if idx == idy:
-                    continue
-                true_val = true_ridge_r2[idx, idy]
-                null_vals = null_ridge_r2[idx, idy, :]
-                p_values[idx, idy] = (np.sum(null_vals >= true_val) + 1) / (len(null_vals) + 1)
+        # trials_low = trials[low_mask].reset_index(drop=True)
+        # candidate_trials_low = build_candidate_pools(trials_low, kd_features)
+        # pseudo_matrix_low = generate_pseudosessions(
+        #     candidate_trials_low, n_pseudosessions=n_pseudosessions
+        # )
+        # stimulus_low = [d[:, low_mask, :] for d in stimulus_data]
+        # choice_low = [d[:, low_mask, :] for d in choice_data]
 
-        # Apply FDR correction (Benjamini-Hochberg)
-        logger.info("Applying Benjamini-Hochberg FDR correction to region pairs...")
-        try:
-            from statsmodels.stats.multitest import fdrcorrection
+        from communication_subspace.ibl_communication.utils import compute_regionwise_null_r2_svd
 
-            valid_p_indices = []
-            valid_p_vals = []
+        logger.info(
+            "Computing Null distributions for ALL, HIGH, and LOW splits using independently modeled pseudosessions..."
+        )
+        null_ridge_r2_all = compute_regionwise_null_r2_svd(
+            stimulus_data,
+            choice_data,
+            frame_idx,
+            frame_idy,
+            candidate_trials_matrix=pseudo_matrix_all,
+            n_iterations=n_pseudosessions,
+        )
+        # null_ridge_r2_high = compute_regionwise_null_r2_svd(
+        #     stimulus_high,
+        #     choice_high,
+        #     frame_idx,
+        #     frame_idy,
+        #     candidate_trials_matrix=pseudo_matrix_high,
+        #     n_iterations=n_pseudosessions,
+        # )
+        # null_ridge_r2_low = compute_regionwise_null_r2_svd(
+        #     stimulus_low,
+        #     choice_low,
+        #     frame_idx,
+        #     frame_idy,
+        #     candidate_trials_matrix=pseudo_matrix_low,
+        #     n_iterations=n_pseudosessions,
+        # )
+
+        def get_p_values_and_fdr(true_r2, null_r2):
+            p_values = np.ones((n_regions, n_regions))
             for idx in range(n_regions):
                 for idy in range(n_regions):
-                    if idx != idy and true_ridge_r2[idx, idy] > min_r2_threshold:
-                        valid_p_indices.append((idx, idy))
-                        valid_p_vals.append(p_values[idx, idy])
+                    if idx == idy:
+                        continue
+                    true_val = true_r2[idx, idy]
+                    null_vals = null_r2[idx, idy, :]
+                    p_values[idx, idy] = (np.sum(null_vals >= true_val) + 1) / (len(null_vals) + 1)
 
-            if len(valid_p_vals) > 0:
-                rejected, pvals_corrected = fdrcorrection(valid_p_vals, alpha=p_threshold)
+            p_values_fdr = np.ones((n_regions, n_regions))
+            try:
+                from statsmodels.stats.multitest import fdrcorrection
 
-                p_values_fdr = np.ones((n_regions, n_regions))
-                for (idx, idy), p_corr in zip(valid_p_indices, pvals_corrected):
-                    p_values_fdr[idx, idy] = p_corr
+                valid_p_indices = []
+                valid_p_vals = []
+                for idx in range(n_regions):
+                    for idy in range(n_regions):
+                        if idx != idy and true_r2[idx, idy] > 0:  # STRICT R2 > 0 FILTER
+                            valid_p_indices.append((idx, idy))
+                            valid_p_vals.append(p_values[idx, idy])
+                if len(valid_p_vals) > 0:
+                    rejected, pvals_corrected = fdrcorrection(valid_p_vals, alpha=p_threshold)
+                    for (idx, idy), p_corr in zip(valid_p_indices, pvals_corrected):
+                        p_values_fdr[idx, idy] = p_corr
+            except ImportError:
+                p_values_fdr = p_values
+            return p_values_fdr
 
-                p_values = p_values_fdr
-        except ImportError:
-            logger.warning("statsmodels not installed, skipping FDR correction!")
+        logger.info("Calculating empirical p-values and applying strict R^2 > 0 FDR correction...")
+        p_values_all = get_p_values_and_fdr(true_ridge_r2, null_ridge_r2_all)
+        # p_values_high = get_p_values_and_fdr(high_ridge_r2, null_ridge_r2_high)
+        # p_values_low = get_p_values_and_fdr(low_ridge_r2, null_ridge_r2_low)
 
-        # Filter for significant region pairs and run RRR / subspace alignment
-        logger.info(
-            f"Filtering significant pairs (FDR p < {p_threshold} and R^2 > {min_r2_threshold})..."
-        )
-        significant_pairs = []
-        for idx in range(n_regions):
-            for idy in range(n_regions):
-                if idx == idy:
-                    continue
-                if p_values[idx, idy] < p_threshold and true_ridge_r2[idx, idy] > min_r2_threshold:
-                    significant_pairs.append((idx, idy))
+        # rrr_results = {}
+        # for idx in tqdm(
+        #     range(n_regions), desc=f"Fitting RRR & Subspace Alignment for {eid}", leave=False
+        # ):
+        #     for idy in range(n_regions):
+        #         if idx == idy:
+        #             continue
 
-        logger.info(
-            f"Found {len(significant_pairs)} significant region pairs out of {n_regions * (n_regions - 1)}"
-        )
+        #         X_all = stimulus_data[idx][frame_idx, :, :]
+        #         Y_all = choice_data[idy][frame_idy, :, :]
 
-        rrr_results = {}
-        for idx, idy in tqdm(
-            significant_pairs, desc=f"Fitting RRR & Subspace Alignment for {eid}"
-        ):
-            X_all = stimulus_data[idx][frame_idx, :, :]
-            Y_all = choice_data[idy][frame_idy, :, :]
+        #         conditions = {
+        #             "all": (X_all, Y_all, None, p_values_all[idx, idy], true_ridge_r2[idx, idy]),
+        #             "high": (
+        #                 X_all[high_mask, :],
+        #                 Y_all[high_mask, :],
+        #                 high_mask,
+        #                 p_values_high[idx, idy],
+        #                 high_ridge_r2[idx, idy],
+        #             ),
+        #             "low": (
+        #                 X_all[low_mask, :],
+        #                 Y_all[low_mask, :],
+        #                 low_mask,
+        #                 p_values_low[idx, idy],
+        #                 low_ridge_r2[idx, idy],
+        #             ),
+        #         }
 
-            conditions = {
-                "all": (X_all, Y_all, None),
-                "high": (X_all[high_mask, :], Y_all[high_mask, :], high_mask),
-                "low": (X_all[low_mask, :], Y_all[low_mask, :], low_mask),
-            }
+        #         pair_res = {}
+        #         for cond_name, (X, Y, mask, p_val, r2_val) in conditions.items():
+        #             # Only compute if highly engaged/low engaged AND significant AND r2 > 0
+        #             if p_val >= p_threshold or r2_val <= 0:
+        #                 continue
 
-            pair_res = {}
-            for cond_name, (X, Y, mask) in conditions.items():
-                if X.shape[0] < 10 or Y.shape[0] < 10:
-                    # Not enough trials to split
-                    continue
-                try:
-                    # Fit RRR
-                    rrr_opt = optimize_rrr_rank(
-                        X, Y, n_splits=5, viz=False, detailed=True, max_rank=max_rank_cap
-                    )
-                    W = rrr_opt["full_weight_matrix"]
+        #             if X.shape[0] < 10 or Y.shape[0] < 10:
+        #                 continue
 
-                    # Compute alignment indices
-                    align_in, _, _ = alignment_input(X, W)
-                    align_out, comm_frac = alignment_output(X, Y, W)
+        #             try:
+        #                 rrr_opt = optimize_rrr_rank(
+        #                     X, Y, n_splits=5, viz=False, detailed=True, max_rank=max_rank_cap
+        #                 )
+        #                 W = rrr_opt["full_weight_matrix"]
+        #                 align_in, _, _ = alignment_input(X, W)
+        #                 align_out, comm_frac = alignment_output(X, Y, W)
+        #                 pair_res[cond_name] = {
+        #                     "optimal_rank": rrr_opt["optimal_rank"],
+        #                     "cv_r2_rrr": rrr_opt["cv_r2"],
+        #                     "input_alignment": align_in,
+        #                     "output_alignment": align_out,
+        #                     "comm_fraction": comm_frac,
+        #                     "mean_r2_curve": rrr_opt["mean_r2"],
+        #                     "full_weight_matrix": W,
+        #                 }
+        #             except Exception as ex:
+        #                 logger.error(
+        #                     f"Error in RRR for pair ({regions[idx]} -> {regions[idy]}) [{cond_name}]: {ex}"
+        #                 )
 
-                    pair_res[cond_name] = {
-                        "optimal_rank": rrr_opt["optimal_rank"],
-                        "cv_r2_rrr": rrr_opt["cv_r2"],
-                        "input_alignment": align_in,
-                        "output_alignment": align_out,
-                        "comm_fraction": comm_frac,
-                        "mean_r2_curve": rrr_opt["mean_r2"],
-                        "full_weight_matrix": W,
-                    }
-                except Exception as ex:
-                    logger.error(
-                        f"Error in RRR for pair ({regions[idx]} -> {regions[idy]}) [{cond_name}]: {ex}"
-                    )
+        #         if pair_res:
+        #             rrr_results[(idx, idy)] = pair_res
 
-            if pair_res:
-                rrr_results[(idx, idy)] = pair_res
+        # significant_pairs = list(rrr_results.keys())
+        # logger.info(
+        #     f"Found {len(significant_pairs)} valid region pairs with at least one significant condition."
+        # )
 
         # Save all results to pickle
         storage_dict = {
             "session_id": eid,
             "regions": regions,
             "true_ridge_r2": true_ridge_r2,
-            "high_ridge_r2": high_ridge_r2,
-            "low_ridge_r2": low_ridge_r2,
-            "p_values": p_values,
-            "null_ridge_r2": null_ridge_r2,
-            "significant_pairs": significant_pairs,
-            "rrr_results": rrr_results,
-            "intrinsic_dimensionality": {
-                "stim": {
-                    "all": (stim_dim_pca),
-                    "high": (stim_dim_pca_high),
-                    "low": (stim_dim_pca_low),
-                },
-                "choice": {
-                    "all": (choice_dim_pca),
-                    "high": (choice_dim_pca_high),
-                    "low": (choice_dim_pca_low),
-                },
-            },
+            "pseudo_matrix": pseudo_matrix_all,
+            # "high_ridge_r2": high_ridge_r2,
+            # "low_ridge_r2": low_ridge_r2,
+            "p_values_all": p_values_all,
+            # "p_values_high": p_values_high,
+            # "p_values_low": p_values_low,
+            "null_ridge_r2": null_ridge_r2_all,  # legacy compatibility
+            # "null_ridge_r2_all": null_ridge_r2_all,
+            # "null_ridge_r2_high": null_ridge_r2_high,
+            # "null_ridge_r2_low": null_ridge_r2_low,
+            # "significant_pairs": significant_pairs,
+            # "rrr_results": rrr_results,
+            # "intrinsic_dimensionality": {
+            #     "stim": {
+            #         "all": (stim_dim_pca),
+            #         "high": (stim_dim_pca_high),
+            #         "low": (stim_dim_pca_low),
+            #     },
+            #     "choice": {
+            #         "all": (choice_dim_pca),
+            #         "high": (choice_dim_pca_high),
+            #         "low": (choice_dim_pca_low),
+            #     },
+            # },
         }
 
-        filename = os.path.join(output_dir, f"{eid}_rrr_results_svd_null_frame1.pkl")
+        filename = os.path.join(output_dir, f"{eid}_rrr_results_all_trials_number.pkl")
         with open(filename, "wb") as f:
             pkl.dump(storage_dict, f)
 
@@ -470,13 +422,13 @@ def run_full_analysis(
     config = check_config()
 
     # Load trials data
-    trials_path = (
-        "/usr/people/kundu/code/communication_python/data/processed/wifi_trials_df_all.pkl"
-    )
-    # local:
     # trials_path = (
-    #     "/Users/dkundu/Documents/phd/communication_python/data/processed/wifi_trials_df_all.pkl"
+    #     "/usr/people/kundu/code/communication_python/data/processed/wifi_trials_df_all.pkl"
     # )
+    # local:
+    trials_path = (
+        "/Users/dkundu/Documents/phd/communication_python/data/processed/wifi_trials_df_all.pkl"
+    )
     logger.info(f"Loading trials data from {trials_path}")
     with open(trials_path, "rb") as f:
         all_trials = pkl.load(f)
@@ -508,7 +460,7 @@ def run_full_analysis(
     logger.info(f"Starting parallel processing for {len(tasks)} sessions...")
 
     # Use max_workers=None to use all available cores, or set a specific number
-    with ProcessPoolExecutor() as executor:
+    with ProcessPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(process_single_session_worker, task): task[0] for task in tasks}
 
         for future in as_completed(futures):
@@ -537,10 +489,9 @@ if __name__ == "__main__":
     sessions = one.search(datasets="widefieldU.images.npy")
 
     session_eids = np.asarray([str(sess) for sess in sessions])  # type: ignore
-    single = False
+    single = True
     if single:
         run_full_analysis(
-            session_ids=[session_eids[0]],
             n_pseudosessions=200,
             max_rank_cap=15,
             p_threshold=0.05,

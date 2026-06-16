@@ -46,7 +46,7 @@ def setup_logger(name="CrossPrediction", log_file="pipeline.log", level=logging.
     return logger
 
 
-def get_align_times(trials, epoch):
+def get_align_times(trials, epoch, response_time=False):
 
     config = check_config()
 
@@ -54,7 +54,11 @@ def get_align_times(trials, epoch):
         align_times = trials.stimOn_times
         frame_windows = config["stimulus_frames"]
     elif epoch == "choice":
-        align_times = trials.firstMovement_times
+        # use response times?
+        if response_time:
+            align_times = trials.response_times
+        else:
+            align_times = trials.firstMovement_times
         frame_windows = config["choice_frames"]
     else:
         raise NotImplementedError
@@ -63,10 +67,10 @@ def get_align_times(trials, epoch):
 
 
 def load_widefield_epoch(
-    one, session_id, trials, hemisphere, epoch, stage_only=False, min_voxels=10
+    one, session_id, trials, hemisphere, epoch, stage_only=False, min_voxels=10, response_time=False
 ):
 
-    align_times, frame_windows = get_align_times(trials, epoch)
+    align_times, frame_windows = get_align_times(trials, epoch, response_time)
     data_epoch, actual_regions = prepare_widefield(
         one,
         session_id,
@@ -243,8 +247,9 @@ def generate_pseudosessions(candidate_pools, n_pseudosessions=200):
 
     return pseudosession_indices
 
+
 def compute_regionwise_null_r2_svd(
-    data_a, data_b, frameidx, frameidy, candidate_trials_matrix, n_iterations=200
+    data_a, data_b, frameidx, frameidy, candidate_trials_matrix, n_iterations=200, trialmask=None
 ):
     """
     SVD-Optimized version of compute_regionwise_null_r2.
@@ -260,89 +265,86 @@ def compute_regionwise_null_r2_svd(
     null_distributions = np.zeros((n_regions, n_regions, n_iterations))
     alphas = np.array([0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10])
 
+    if trialmask is None:
+        trialmask = np.ones(data_a[0].shape[1], dtype=bool)
+
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-    for idy in range(n_regions):
+    for idy in tqdm(range(n_regions), desc="Running null session for target regions", leave=False):
         base_region_y = data_b[idy][frameidy, :, :].astype(np.float64)
 
         shifted_targets = []
         for iter_idx in range(n_iterations):
             trial_order = candidate_trials_matrix[:, iter_idx]
-            shifted_targets.append(base_region_y[trial_order, :])
+            shifted_targets.append(base_region_y[trial_order, :][trialmask, :])
 
         for idx in range(n_regions):
             if idx == idy:
                 continue
 
-            region_x = data_a[idx][frameidx, :, :].astype(np.float64)
+            region_x = data_a[idx][frameidx, trialmask, :].astype(np.float64)
 
             # Precompute SVD-based Projection Matrices for each fold
             fold_data = []
             for train_idx, test_idx in kf.split(region_x):
                 X_train, X_test = region_x[train_idx], region_x[test_idx]
-                
+
                 mean_X = np.mean(X_train, axis=0)
                 std_X = np.std(X_train, axis=0)
                 std_X[std_X == 0] = 1.0
-                
+
                 X_tr_sc = (X_train - mean_X) / std_X
                 X_te_sc = (X_test - mean_X) / std_X
-                
+
                 # Full SVD: X = U * S * V^T
                 U, S, Vt = np.linalg.svd(X_tr_sc, full_matrices=False)
-                
+
                 # Precompute projection matrix for each alpha
                 alpha_projections = []
                 for alpha in alphas:
                     D = S / (S**2 + alpha)
                     Proj = Vt.T @ np.diag(D) @ U.T
                     alpha_projections.append(Proj)
-                    
+
                 fold_data.append((train_idx, test_idx, X_te_sc, alpha_projections))
 
             # Process all shifted Ys using precomputed Projections
             for iter_idx in range(n_iterations):
                 Y_null = shifted_targets[iter_idx]
-                
+
                 mean_scores = np.zeros(len(alphas))
                 sem_scores = np.zeros(len(alphas))
-                
+
                 alpha_fold_scores = [[] for _ in range(len(alphas))]
-                
+
                 for train_idx, test_idx, X_te_sc, alpha_projections in fold_data:
                     Y_train, Y_test = Y_null[train_idx], Y_null[test_idx]
-                    
+
                     mean_Y = np.mean(Y_train, axis=0)
                     std_Y = np.std(Y_train, axis=0)
                     std_Y[std_Y == 0] = 1.0
-                    
+
                     Y_tr_sc = (Y_train - mean_Y) / std_Y
                     Y_te_sc = (Y_test - mean_Y) / std_Y
-                    
+
                     # Score for each alpha
                     for a_idx, Proj in enumerate(alpha_projections):
                         Y_pred = X_te_sc @ (Proj @ Y_tr_sc)
-                        
+
                         # Vectorized R2 Score perfectly mirroring sklearn
-                        ss_res = np.sum((Y_te_sc - Y_pred)**2, axis=0)
-                        ss_tot = np.sum((Y_te_sc - np.mean(Y_te_sc, axis=0))**2, axis=0)
+                        ss_res = np.sum((Y_te_sc - Y_pred) ** 2, axis=0)
+                        ss_tot = np.sum((Y_te_sc - np.mean(Y_te_sc, axis=0)) ** 2, axis=0)
                         nonzero = ss_tot > 1e-10
                         r2_arr = np.zeros(Y_te_sc.shape[1])
                         r2_arr[nonzero] = 1 - ss_res[nonzero] / ss_tot[nonzero]
-                        
+
                         alpha_fold_scores[a_idx].append(np.mean(r2_arr))
-                        
+
                 for a_idx in range(len(alphas)):
                     mean_scores[a_idx] = np.mean(alpha_fold_scores[a_idx])
                     sem_scores[a_idx] = sem(alpha_fold_scores[a_idx])
-                    
+
                 peak_idx = np.argmax(mean_scores)
-                threshold = mean_scores[peak_idx] - sem_scores[peak_idx]
-                
-                valid_indices = np.where(mean_scores >= threshold)[0]
-                optimal_alpha = np.max(alphas[valid_indices])
-                
-                optimal_idx = np.where(alphas == optimal_alpha)[0][0]
-                null_distributions[idx, idy, iter_idx] = mean_scores[optimal_idx]
+                null_distributions[idx, idy, iter_idx] = mean_scores[peak_idx]
 
     return null_distributions
